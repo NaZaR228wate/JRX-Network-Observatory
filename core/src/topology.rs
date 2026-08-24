@@ -8,22 +8,72 @@
 
 use serde::Serialize;
 
-use crate::device::{Category, Device, Isolation, assess_isolation};
+use crate::device::{
+    Category, Confidence, Device, DeviceFamily, DiscoveryMethod, Evidence, Isolation,
+    assess_isolation,
+};
+
+/// One device as it appears on the map.
+///
+/// Carries enough to draw it *and* to answer "what is this, and why do you
+/// think so?" without a second lookup. In M4 that question is one click away,
+/// so the answer travels with the node.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct TopologyNode {
+    /// References the full record in the device list.
+    pub device_id: String,
+    pub display_name: String,
+
+    // ---- conclusion ----
+    pub category: Category,
+    pub confidence: Confidence,
+    pub family: Option<DeviceFamily>,
+    pub rationale: &'static str,
+    /// Only the evidence that produced the conclusion — never a vendor.
+    pub evidence: Vec<Evidence>,
+
+    // ---- identity, as observed ----
+    pub vendor: Option<String>,
+    /// The device is rotating its hardware address on purpose. This is why an
+    /// Unknown node is Unknown, and it belongs next to the node.
+    pub mac_randomised: bool,
+    pub sources: Vec<DiscoveryMethod>,
+    pub is_self: bool,
+    pub is_gateway: bool,
+}
+
+impl TopologyNode {
+    fn of(device: &Device) -> TopologyNode {
+        TopologyNode {
+            device_id: device.id.clone(),
+            display_name: device.display_name(),
+            category: device.inference.category,
+            confidence: device.inference.confidence,
+            family: device.inference.family,
+            rationale: device.inference.rationale,
+            evidence: device.inference.supporting.clone(),
+            vendor: device.facts.vendor.clone(),
+            mac_randomised: device.facts.mac_randomised,
+            sources: device.facts.sources.clone(),
+            is_self: device.is_self,
+            is_gateway: device.is_gateway,
+        }
+    }
+}
 
 /// Devices sharing one category, in one ring sector.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct TopologyGroup {
     pub category: Category,
     pub label: &'static str,
-    /// Device ids, referencing the device list.
-    pub devices: Vec<String>,
+    pub devices: Vec<TopologyNode>,
 }
 
 /// The map.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Topology {
     /// The router. The one device identified with certainty.
-    pub center: Option<String>,
+    pub center: Option<TopologyNode>,
     /// This machine, so the UI can highlight it.
     pub self_id: Option<String>,
     /// Always all five categories, always in the same order.
@@ -32,7 +82,7 @@ pub struct Topology {
 
 impl Topology {
     pub fn build(devices: &[Device]) -> Topology {
-        let center = devices.iter().find(|d| d.is_gateway).map(|d| d.id.clone());
+        let center = devices.iter().find(|d| d.is_gateway).map(TopologyNode::of);
         let self_id = devices.iter().find(|d| d.is_self).map(|d| d.id.clone());
 
         let groups = Category::ORDER
@@ -43,8 +93,8 @@ impl Topology {
                 devices: devices
                     .iter()
                     // The centre is drawn in the middle, not in a ring.
-                    .filter(|d| !d.is_gateway && d.category == category)
-                    .map(|d| d.id.clone())
+                    .filter(|d| !d.is_gateway && d.category() == category)
+                    .map(TopologyNode::of)
                     .collect(),
             })
             .collect();
@@ -74,14 +124,14 @@ impl DiscoverySummary {
             total: devices.len(),
             unidentified: devices
                 .iter()
-                .filter(|d| d.category == Category::Unknown)
+                .filter(|d| d.category() == Category::Unknown)
                 .count(),
             by_category: Category::ORDER
                 .into_iter()
                 .map(|category| {
                     (
                         category,
-                        devices.iter().filter(|d| d.category == category).count(),
+                        devices.iter().filter(|d| d.category() == category).count(),
                     )
                 })
                 .collect(),
@@ -93,7 +143,9 @@ impl DiscoverySummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{Category, DeviceTable, DiscoveryMethod, MacAddress, Observation};
+    use crate::device::{
+        Category, Confidence, DeviceTable, DiscoveryMethod, MacAddress, Observation,
+    };
 
     fn ip(s: &str) -> std::net::IpAddr {
         s.parse().unwrap()
@@ -129,24 +181,84 @@ mod tests {
     #[test]
     fn the_router_is_the_centre() {
         let topology = Topology::build(&home_network());
-        assert_eq!(topology.center.as_deref(), Some("192.168.1.1"));
+        assert_eq!(
+            topology.center.as_ref().map(|n| n.device_id.as_str()),
+            Some("192.168.1.1")
+        );
     }
 
     #[test]
     fn this_device_is_identified_for_highlighting() {
         let topology = Topology::build(&home_network());
         assert_eq!(topology.self_id.as_deref(), Some("192.168.1.10"));
+        let me = topology
+            .groups
+            .iter()
+            .flat_map(|g| &g.devices)
+            .find(|n| n.is_self)
+            .expect("this device is placed");
+        assert_eq!(me.device_id, "192.168.1.10");
     }
 
     /// The centre must not also appear in a ring, or the router would render
     /// twice.
+    /// Every node must be explainable where it is drawn. In M4 a user will
+    /// click a dot and ask "what is this, and why do you think so?" — the
+    /// answer has to travel with the node.
+    #[test]
+    fn a_node_carries_its_identity_evidence_and_conclusion() {
+        let topology = Topology::build(&home_network());
+        let node = topology
+            .groups
+            .iter()
+            .flat_map(|g| &g.devices)
+            .find(|n| n.device_id == "192.168.1.20")
+            .expect("the Apple TV is placed");
+
+        assert_eq!(node.display_name, "Apple-TV");
+        assert_eq!(node.category, Category::SmartHome);
+        assert!(!node.evidence.is_empty(), "a node must carry its evidence");
+        assert!(!node.rationale.is_empty(), "a node must say why");
+        assert!(node.sources.contains(&DiscoveryMethod::Mdns));
+    }
+
+    /// A node JRX declined to identify must still say so out loud rather than
+    /// arriving as a bare dot with no explanation.
+    #[test]
+    fn an_unknown_node_still_explains_itself() {
+        let topology = Topology::build(&home_network());
+        let node = topology
+            .groups
+            .iter()
+            .flat_map(|g| &g.devices)
+            .find(|n| n.device_id == "192.168.1.30")
+            .expect("the randomised device is placed");
+
+        assert_eq!(node.category, Category::Unknown);
+        assert!(
+            node.mac_randomised,
+            "the reason it is unknown must travel with it"
+        );
+        assert!(node.rationale.to_lowercase().contains("not identified"));
+    }
+
+    /// The centre is the router, and it needs the same treatment.
+    #[test]
+    fn the_centre_node_is_available_with_its_evidence() {
+        let topology = Topology::build(&home_network());
+        let centre = topology.center.as_ref().expect("a centre");
+        assert_eq!(centre.category, Category::Infrastructure);
+        assert_eq!(centre.confidence, Confidence::High);
+        assert!(!centre.evidence.is_empty());
+    }
+
     #[test]
     fn the_centre_is_not_repeated_in_a_group() {
         let topology = Topology::build(&home_network());
         let placed: Vec<&str> = topology
             .groups
             .iter()
-            .flat_map(|g| g.devices.iter().map(String::as_str))
+            .flat_map(|g| g.devices.iter().map(|n| n.device_id.as_str()))
             .collect();
         assert!(!placed.contains(&"192.168.1.1"));
     }
@@ -160,7 +272,7 @@ mod tests {
         let placed: Vec<&str> = topology
             .groups
             .iter()
-            .flat_map(|g| g.devices.iter().map(String::as_str))
+            .flat_map(|g| g.devices.iter().map(|n| n.device_id.as_str()))
             .collect();
 
         assert_eq!(placed.len(), devices.len() - 1);
@@ -193,21 +305,10 @@ mod tests {
                 .find(|g| g.category == c)
                 .expect("group")
         };
-        assert!(
-            group(Category::Computers)
-                .devices
-                .contains(&"192.168.1.10".to_string())
-        );
-        assert!(
-            group(Category::SmartHome)
-                .devices
-                .contains(&"192.168.1.20".to_string())
-        );
-        assert!(
-            group(Category::Unknown)
-                .devices
-                .contains(&"192.168.1.30".to_string())
-        );
+        let holds = |c: Category, id: &str| group(c).devices.iter().any(|n| n.device_id == id);
+        assert!(holds(Category::Computers, "192.168.1.10"));
+        assert!(holds(Category::SmartHome, "192.168.1.20"));
+        assert!(holds(Category::Unknown, "192.168.1.30"));
     }
 
     /// Unknown is reported as a count, not hidden and not dressed up.

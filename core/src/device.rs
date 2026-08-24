@@ -392,6 +392,206 @@ fn hostname_hint(name: &str) -> Option<Category> {
     }
 }
 
+/// A finer statement than a category: what kind of thing this is.
+///
+/// Only ever set from definitive evidence. A name is enough to say "some kind
+/// of computer" but not enough to say "a laptop", so Medium-confidence
+/// categories carry no family (TECH_DECISIONS.md ADR-008).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DeviceFamily {
+    Router,
+    AccessPoint,
+    NetworkStorage,
+    Printer,
+    MediaReceiver,
+    HomeAccessory,
+    Workstation,
+    Handheld,
+}
+
+impl DeviceFamily {
+    pub fn label(self) -> &'static str {
+        match self {
+            DeviceFamily::Router => "Router",
+            DeviceFamily::AccessPoint => "Access point",
+            DeviceFamily::NetworkStorage => "Network storage",
+            DeviceFamily::Printer => "Printer",
+            DeviceFamily::MediaReceiver => "Media receiver",
+            DeviceFamily::HomeAccessory => "Home accessory",
+            DeviceFamily::Workstation => "Workstation",
+            DeviceFamily::Handheld => "Phone or tablet",
+        }
+    }
+}
+
+/// One recorded change of category, and what caused it.
+///
+/// A device must never change what it is without leaving a reason behind.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CategoryChange {
+    pub from: Category,
+    pub to: Category,
+    pub confidence: Confidence,
+    pub reason: &'static str,
+    /// The single observation that tipped the conclusion.
+    pub triggered_by: Evidence,
+}
+
+/// What JRX concluded about a device, and why.
+///
+/// Kept separate from `ObservedFacts` on purpose: a fact is something we saw,
+/// an inference is something we decided. Mixing them is how a guess ends up
+/// presented as a measurement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CategoryInference {
+    pub category: Category,
+    pub confidence: Confidence,
+    pub family: Option<DeviceFamily>,
+    /// Why, in words the user can read.
+    pub rationale: &'static str,
+    /// The evidence that produced this conclusion — never the whole evidence
+    /// list, and never a vendor.
+    pub supporting: Vec<Evidence>,
+    /// Every category change, in the order the evidence was considered.
+    pub history: Vec<CategoryChange>,
+}
+
+/// The family implied by one definitive piece of evidence, if any.
+fn definitive_family(evidence: &Evidence) -> Option<DeviceFamily> {
+    match evidence.kind {
+        EvidenceKind::GatewayRole => Some(DeviceFamily::Router),
+        EvidenceKind::ServiceType => {
+            let s = evidence.value.to_ascii_lowercase();
+            if s.contains("_ipp.")
+                || s.contains("_ipps.")
+                || s.contains("_printer.")
+                || s.contains("_pdl-datastream.")
+            {
+                Some(DeviceFamily::Printer)
+            } else if s.contains("_googlecast.") {
+                Some(DeviceFamily::MediaReceiver)
+            } else if s.contains("_hap.") || s.contains("_matter") || s.contains("_hue.") {
+                Some(DeviceFamily::HomeAccessory)
+            } else if s.contains("_smb.")
+                || s.contains("_ssh.")
+                || s.contains("_sftp-ssh.")
+                || s.contains("_rfb.")
+                || s.contains("_workstation.")
+                || s.contains("_afpovertcp.")
+            {
+                Some(DeviceFamily::Workstation)
+            } else if s.contains("_apple-mobdev") || s.contains("_rdlink") {
+                Some(DeviceFamily::Handheld)
+            } else if s.contains("_nas.") || s.contains("_adisk.") {
+                Some(DeviceFamily::NetworkStorage)
+            } else {
+                None
+            }
+        }
+        EvidenceKind::UpnpDeviceType => {
+            let u = evidence.value.to_ascii_lowercase();
+            if u.contains("internetgatewaydevice") {
+                Some(DeviceFamily::Router)
+            } else if u.contains("wlanaccesspoint") {
+                Some(DeviceFamily::AccessPoint)
+            } else if u.contains("printer") {
+                Some(DeviceFamily::Printer)
+            } else if u.contains("mediarenderer") || u.contains("mediaserver") {
+                Some(DeviceFamily::MediaReceiver)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Derive a category, the evidence behind it, and the trail of how it was
+/// reached.
+///
+/// The trail is produced by replaying the evidence in derivation order and
+/// recording every point at which the conclusion moved. That is what makes
+/// "why do you think this is a computer?" answerable with a specific
+/// observation rather than a shrug.
+pub fn infer(evidence: &[Evidence]) -> CategoryInference {
+    let mut history: Vec<CategoryChange> = Vec::new();
+    let mut standing = (Category::Unknown, Confidence::None);
+
+    for step in 1..=evidence.len() {
+        let (category, confidence) = classify(&evidence[..step]);
+        if (category, confidence) == standing {
+            continue;
+        }
+        history.push(CategoryChange {
+            from: standing.0,
+            to: category,
+            confidence,
+            reason: rationale_for(category, confidence),
+            triggered_by: evidence[step - 1].clone(),
+        });
+        standing = (category, confidence);
+    }
+
+    let (category, confidence) = standing;
+    let supporting = supporting_evidence(evidence, category, confidence);
+    let family = (confidence == Confidence::High)
+        .then(|| supporting.iter().find_map(definitive_family))
+        .flatten();
+
+    CategoryInference {
+        category,
+        confidence,
+        family,
+        rationale: rationale_for(category, confidence),
+        supporting,
+        history,
+    }
+}
+
+/// The evidence that actually decided the category.
+///
+/// Deliberately excludes vendor: a manufacturer is an observed fact and never
+/// support for a category (TECH_DECISIONS.md ADR-008), so citing it here would
+/// misrepresent the reasoning.
+fn supporting_evidence(
+    evidence: &[Evidence],
+    category: Category,
+    confidence: Confidence,
+) -> Vec<Evidence> {
+    if category == Category::Unknown {
+        return Vec::new();
+    }
+
+    evidence
+        .iter()
+        .filter(|e| match e.kind {
+            EvidenceKind::GatewayRole | EvidenceKind::SelfRole => true,
+            EvidenceKind::ServiceType => definitive_service_category(&e.value) == Some(category),
+            EvidenceKind::UpnpDeviceType => definitive_upnp_category(&e.value) == Some(category),
+            EvidenceKind::Hostname => {
+                confidence == Confidence::Medium && hostname_hint(&e.value) == Some(category)
+            }
+            EvidenceKind::Vendor | EvidenceKind::MacAddress => false,
+        })
+        .cloned()
+        .collect()
+}
+
+fn rationale_for(category: Category, confidence: Confidence) -> &'static str {
+    match (category, confidence) {
+        (Category::Unknown, _) => {
+            "Not identified. Nothing this device revealed says what kind of device it is."
+        }
+        (Category::Infrastructure, Confidence::High) => "Verified role on this network.",
+        (_, Confidence::High) => "Advertises a service only this kind of device provides.",
+        (_, Confidence::Medium) => {
+            "Its name suggests this, and another observation agrees. Names are chosen by people, so this is likely rather than certain."
+        }
+        (_, Confidence::None) => "Not identified.",
+    }
+}
+
 /// Derive a category from evidence.
 ///
 /// The rule, from TECH_DECISIONS.md ADR-008: a category is assigned only on
@@ -639,6 +839,65 @@ mod classify_tests {
     }
 }
 
+/// The addressing facts used to decide whether two sightings are one device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Identity {
+    pub addresses: Vec<IpAddr>,
+    pub mac: Option<MacAddress>,
+}
+
+/// Whether two sightings describe the same device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergeDecision {
+    /// Same stable hardware address. Survives a DHCP lease change.
+    SameHardware,
+    /// Same network address, with nothing contradicting it.
+    SameAddress,
+    /// Different devices.
+    Distinct,
+}
+
+/// Decide whether an incoming sighting belongs to a known device.
+///
+/// The rules, in order of strength:
+///
+/// 1. Two stable hardware addresses that match are one device, whatever their
+///    network addresses — this is a DHCP lease change.
+/// 2. Two stable hardware addresses that differ are two devices, whatever
+///    their network addresses — this is a reused lease, and merging them would
+///    fuse two machines into one entry with a merged history.
+/// 3. A randomised hardware address is never a reason to merge. It is
+///    deliberately unstable: one phone changes it per network, and two phones
+///    can present the same one.
+/// 4. Otherwise a shared network address merges, which is the ordinary case of
+///    mDNS enriching an ARP entry.
+///
+/// Names are absent from this list on purpose. Hostnames are not unique.
+pub fn merge_decision(existing: &Identity, incoming: &Identity) -> MergeDecision {
+    let stable = |mac: Option<MacAddress>| mac.filter(|m| !m.is_randomised());
+    let (left, right) = (stable(existing.mac), stable(incoming.mac));
+
+    if let (Some(left), Some(right)) = (left, right) {
+        return if left == right {
+            MergeDecision::SameHardware
+        } else {
+            MergeDecision::Distinct
+        };
+    }
+
+    let shares_address = incoming
+        .addresses
+        .iter()
+        .any(|a| existing.addresses.contains(a));
+
+    if shares_address {
+        MergeDecision::SameAddress
+    } else {
+        MergeDecision::Distinct
+    }
+}
+
 /// One sighting of one device, from one source.
 #[derive(Debug, Clone)]
 pub struct Observation {
@@ -687,40 +946,67 @@ impl Observation {
     }
 }
 
+/// What was actually observed about a device. No conclusions.
+///
+/// Held separately from `CategoryInference` on purpose: a fact is something we
+/// saw, an inference is something we decided. Mixing them is how a guess ends
+/// up presented as a measurement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ObservedFacts {
+    pub addresses: Vec<IpAddr>,
+    pub mac: Option<MacAddress>,
+    pub hostname: Option<String>,
+    /// Resolved from the hardware address prefix. An observed fact about the
+    /// manufacturer — never a statement about what the device is.
+    pub vendor: Option<String>,
+    pub services: Vec<String>,
+    pub upnp_types: Vec<String>,
+    /// Which sources saw this device.
+    pub sources: Vec<DiscoveryMethod>,
+    /// The device is deliberately rotating its hardware address.
+    pub mac_randomised: bool,
+}
+
 /// A device on the local network, derived entirely from evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Device {
     /// Stable within one run; used to reference a device from the topology.
     pub id: String,
-    pub addresses: Vec<IpAddr>,
-    pub mac: Option<MacAddress>,
-    pub hostname: Option<String>,
-    pub vendor: Option<String>,
-    pub services: Vec<String>,
-    pub category: Category,
-    pub confidence: Confidence,
+    /// What we saw.
+    pub facts: ObservedFacts,
+    /// What we concluded, and why.
+    pub inference: CategoryInference,
+    /// Everything considered, in derivation order.
+    pub evidence: Vec<Evidence>,
     pub is_self: bool,
     pub is_gateway: bool,
-    /// The device is deliberately rotating its hardware address.
-    pub mac_randomised: bool,
-    pub evidence: Vec<Evidence>,
-    pub discovered_by: Vec<DiscoveryMethod>,
+}
+
+impl Device {
+    pub fn category(&self) -> Category {
+        self.inference.category
+    }
+
+    pub fn confidence(&self) -> Confidence {
+        self.inference.confidence
+    }
 }
 
 impl Device {
     /// What to show as the device's name, without inventing one.
     pub fn display_name(&self) -> String {
-        if let Some(host) = &self.hostname {
+        if let Some(host) = &self.facts.hostname {
             return host
                 .trim_end_matches(".local")
                 .trim_end_matches('.')
                 .to_string();
         }
-        if let Some(vendor) = &self.vendor {
+        if let Some(vendor) = &self.facts.vendor {
             // A vendor is not a name, so it is presented as a description.
             return format!("{vendor} device");
         }
-        self.addresses
+        self.facts
+            .addresses
             .first()
             .map_or_else(|| "Unidentified device".to_string(), |a| a.to_string())
     }
@@ -855,25 +1141,27 @@ impl DeviceTable {
                     .map(str::to_owned);
 
                 let evidence = Self::evidence_for(entry, vendor.as_deref());
-                let (category, confidence) = classify(&evidence);
+                let inference = infer(&evidence);
 
                 Device {
                     id: entry
                         .addresses
                         .first()
                         .map_or_else(String::new, ToString::to_string),
-                    addresses: entry.addresses.clone(),
-                    mac: entry.mac,
-                    hostname: entry.hostname.clone(),
-                    vendor,
-                    services: entry.services.clone(),
-                    category,
-                    confidence,
+                    facts: ObservedFacts {
+                        addresses: entry.addresses.clone(),
+                        mac: entry.mac,
+                        hostname: entry.hostname.clone(),
+                        vendor,
+                        services: entry.services.clone(),
+                        upnp_types: entry.upnp_types.clone(),
+                        sources: entry.methods.clone(),
+                        mac_randomised: randomised,
+                    },
+                    inference,
+                    evidence,
                     is_self: entry.is_self,
                     is_gateway: entry.is_gateway,
-                    mac_randomised: randomised,
-                    evidence,
-                    discovered_by: entry.methods.clone(),
                 }
             })
             .collect()
@@ -975,6 +1263,13 @@ mod table_tests {
         (mac.oui() == [0xa4, 0x83, 0xe7]).then_some("Apple")
     }
 
+    /// Answers for *any* address, so a `None` result can only mean the lookup
+    /// was deliberately skipped. A resolver that happens not to know the test
+    /// address would make the assertion below unfalsifiable.
+    fn vendor_for_anything(_: MacAddress) -> Option<&'static str> {
+        Some("Test Vendor")
+    }
+
     fn arp(addr: &str, mac: &str) -> Observation {
         Observation::new(ip(addr), DiscoveryMethod::ArpCache).with_mac(MacAddress::parse(mac))
     }
@@ -986,8 +1281,8 @@ mod table_tests {
 
         let devices = table.finish(no_vendor);
         assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].category, Category::Unknown);
-        assert_eq!(devices[0].discovered_by, vec![DiscoveryMethod::ArpCache]);
+        assert_eq!(devices[0].category(), Category::Unknown);
+        assert_eq!(devices[0].facts.sources, vec![DiscoveryMethod::ArpCache]);
     }
 
     /// The same device seen by ARP and by mDNS is one device, and the record
@@ -1004,9 +1299,9 @@ mod table_tests {
 
         let devices = table.finish(no_vendor);
         assert_eq!(devices.len(), 1, "same address must not appear twice");
-        assert_eq!(devices[0].category, Category::Computers);
+        assert_eq!(devices[0].category(), Category::Computers);
         assert_eq!(
-            devices[0].discovered_by,
+            devices[0].facts.sources,
             vec![DiscoveryMethod::ArpCache, DiscoveryMethod::Mdns]
         );
     }
@@ -1021,7 +1316,7 @@ mod table_tests {
 
         let devices = table.finish(no_vendor);
         assert_eq!(devices.len(), 1);
-        assert_eq!(devices[0].addresses.len(), 2);
+        assert_eq!(devices[0].facts.addresses.len(), 2);
     }
 
     /// A randomised address is deliberately not stable, so two devices using
@@ -1040,13 +1335,13 @@ mod table_tests {
         let mut table = DeviceTable::new();
         table.observe(arp("192.168.1.10", "a6:83:e7:11:22:33"));
 
-        let devices = table.finish(apple_vendor);
-        assert!(devices[0].mac_randomised);
+        let devices = table.finish(vendor_for_anything);
+        assert!(devices[0].facts.mac_randomised);
         assert_eq!(
-            devices[0].vendor, None,
+            devices[0].facts.vendor, None,
             "a randomised address does not identify a manufacturer"
         );
-        assert_eq!(devices[0].category, Category::Unknown);
+        assert_eq!(devices[0].category(), Category::Unknown);
     }
 
     #[test]
@@ -1055,9 +1350,9 @@ mod table_tests {
         table.observe(arp("192.168.1.10", "a4:83:e7:11:22:33"));
 
         let devices = table.finish(apple_vendor);
-        assert_eq!(devices[0].vendor.as_deref(), Some("Apple"));
+        assert_eq!(devices[0].facts.vendor.as_deref(), Some("Apple"));
         // ...and still does not classify it.
-        assert_eq!(devices[0].category, Category::Unknown);
+        assert_eq!(devices[0].category(), Category::Unknown);
     }
 
     /// Broadcast and multicast addresses are destinations, not devices. macOS
@@ -1087,9 +1382,9 @@ mod table_tests {
             .expect("gateway present");
         let me = devices.iter().find(|d| d.is_self).expect("self present");
 
-        assert_eq!(gateway.category, Category::Infrastructure);
-        assert_eq!(gateway.confidence, Confidence::High);
-        assert_eq!(me.category, Category::Computers);
+        assert_eq!(gateway.category(), Category::Infrastructure);
+        assert_eq!(gateway.confidence(), Confidence::High);
+        assert_eq!(me.category(), Category::Computers);
     }
 
     /// Marking a device we have not otherwise seen must still create it: this
@@ -1154,5 +1449,287 @@ mod table_tests {
 
         let devices = table.finish(no_vendor);
         assert_eq!(assess_isolation(&devices), Isolation::Normal);
+    }
+}
+
+#[cfg(test)]
+mod merge_rule_tests {
+    use super::*;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+    fn mac(s: &str) -> MacAddress {
+        MacAddress::parse(s).unwrap()
+    }
+    fn known(addresses: &[&str], hardware: Option<&str>) -> Identity {
+        Identity {
+            addresses: addresses.iter().map(|a| ip(a)).collect(),
+            mac: hardware.map(mac),
+        }
+    }
+
+    /// A stable hardware address is the strongest identity we have: the same
+    /// device keeps it across a DHCP lease change.
+    #[test]
+    fn dhcp_address_change_keeps_one_device() {
+        let decision = merge_decision(
+            &known(&["192.168.1.50"], Some("a4:83:e7:11:22:33")),
+            &known(&["192.168.1.77"], Some("a4:83:e7:11:22:33")),
+        );
+        assert_eq!(decision, MergeDecision::SameHardware);
+    }
+
+    /// A randomised address is deliberately not stable. Two phones can present
+    /// the same one, and one phone changes it per network, so it can never be
+    /// the reason to merge.
+    #[test]
+    fn randomised_addresses_never_merge_even_when_identical() {
+        let decision = merge_decision(
+            &known(&["192.168.1.50"], Some("9e:aa:bb:cc:dd:ee")),
+            &known(&["192.168.1.51"], Some("9e:aa:bb:cc:dd:ee")),
+        );
+        assert_eq!(decision, MergeDecision::Distinct);
+    }
+
+    /// A lease handed to a different machine must not fuse two devices into a
+    /// single entry with a merged history.
+    #[test]
+    fn a_reused_address_with_different_hardware_stays_two_devices() {
+        let decision = merge_decision(
+            &known(&["192.168.1.50"], Some("a4:83:e7:11:22:33")),
+            &known(&["192.168.1.50"], Some("b8:27:eb:00:11:22")),
+        );
+        assert_eq!(
+            decision,
+            MergeDecision::Distinct,
+            "the same address held by different hardware is two devices"
+        );
+    }
+
+    /// An address alone merges only when nothing contradicts it — which is the
+    /// mDNS-enriches-ARP case, where one source has no hardware address.
+    #[test]
+    fn an_address_match_merges_when_one_side_has_no_hardware_address() {
+        let decision = merge_decision(
+            &known(&["192.168.1.50"], Some("a4:83:e7:11:22:33")),
+            &known(&["192.168.1.50"], None),
+        );
+        assert_eq!(decision, MergeDecision::SameAddress);
+    }
+
+    #[test]
+    fn unrelated_devices_do_not_merge() {
+        let decision = merge_decision(
+            &known(&["192.168.1.50"], Some("a4:83:e7:11:22:33")),
+            &known(&["192.168.1.60"], Some("b8:27:eb:00:11:22")),
+        );
+        assert_eq!(decision, MergeDecision::Distinct);
+    }
+
+    /// A randomised address on one side must not block an address match, or a
+    /// phone seen by both ARP and mDNS would appear twice.
+    #[test]
+    fn a_randomised_device_still_merges_on_a_shared_address() {
+        let decision = merge_decision(
+            &known(&["192.168.1.50"], Some("9e:aa:bb:cc:dd:ee")),
+            &known(&["192.168.1.50"], None),
+        );
+        assert_eq!(decision, MergeDecision::SameAddress);
+    }
+}
+
+#[cfg(test)]
+mod hostname_merge_tests {
+    use super::*;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    /// Names are not unique. Two machines imaged from the same template,
+    /// or two phones with the default name, share a hostname and are still
+    /// two devices.
+    #[test]
+    fn two_devices_sharing_a_hostname_are_not_merged() {
+        let mut table = DeviceTable::new();
+        table.observe(
+            Observation::new(ip("192.168.1.10"), DiscoveryMethod::Mdns)
+                .with_mac(MacAddress::parse("a4:83:e7:11:22:33"))
+                .with_hostname(Some("MacBook-Pro".into())),
+        );
+        table.observe(
+            Observation::new(ip("192.168.1.11"), DiscoveryMethod::Mdns)
+                .with_mac(MacAddress::parse("b8:27:eb:00:11:22"))
+                .with_hostname(Some("MacBook-Pro".into())),
+        );
+
+        assert_eq!(table.finish(|_| None).len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod inference_tests {
+    use super::*;
+
+    fn service(name: &str) -> Evidence {
+        Evidence::new(EvidenceKind::ServiceType, name, DiscoveryMethod::Mdns)
+    }
+    fn hostname(name: &str) -> Evidence {
+        Evidence::new(EvidenceKind::Hostname, name, DiscoveryMethod::Mdns)
+    }
+    fn vendor(name: &str) -> Evidence {
+        Evidence::new(EvidenceKind::Vendor, name, DiscoveryMethod::ArpCache)
+    }
+    fn mac(addr: &str) -> Evidence {
+        Evidence::new(EvidenceKind::MacAddress, addr, DiscoveryMethod::ArpCache)
+    }
+
+    /// An inference must name the evidence that produced it. A category with
+    /// no cited evidence is an assertion, not a conclusion.
+    #[test]
+    fn an_inference_cites_the_evidence_that_produced_it() {
+        let inference = infer(&[
+            hostname("Nazars-MacBook-Pro"),
+            service("_ssh._tcp"),
+            vendor("Apple"),
+        ]);
+
+        assert_eq!(inference.category, Category::Computers);
+        assert!(
+            inference.supporting.iter().any(|e| e.value == "_ssh._tcp"),
+            "the service that decided it must be cited"
+        );
+        assert!(!inference.rationale.is_empty());
+    }
+
+    /// Vendor is an observed fact, never support for a category.
+    #[test]
+    fn vendor_is_never_cited_as_support_for_a_category() {
+        let inference = infer(&[
+            hostname("Nazars-iPhone"),
+            vendor("Apple"),
+            mac("a4:83:e7:11:22:33"),
+        ]);
+
+        assert_eq!(inference.category, Category::Phones);
+        assert!(
+            !inference
+                .supporting
+                .iter()
+                .any(|e| e.kind == EvidenceKind::Vendor),
+            "a vendor must not appear as support for a category"
+        );
+    }
+
+    #[test]
+    fn an_unclassified_device_cites_nothing_and_says_why() {
+        let inference = infer(&[mac("9e:aa:bb:cc:dd:ee")]);
+
+        assert_eq!(inference.category, Category::Unknown);
+        assert!(inference.supporting.is_empty());
+        assert!(
+            inference.rationale.to_lowercase().contains("not"),
+            "an Unknown device must state what was missing, got: {}",
+            inference.rationale
+        );
+    }
+
+    // ---- the timeline ----
+
+    /// Every category change records the observation that caused it. A device
+    /// must never change what it is without leaving a reason behind.
+    #[test]
+    fn every_category_change_records_the_evidence_that_caused_it() {
+        let inference = infer(&[
+            mac("a4:83:e7:11:22:33"),
+            vendor("Apple"),
+            hostname("Nazars-MacBook-Pro"),
+            service("_ssh._tcp"),
+        ]);
+
+        assert!(!inference.history.is_empty(), "no timeline recorded");
+
+        // A confidence upgrade within the same category is a real move and
+        // worth recording: "we became more sure, and here is what did it."
+        for change in &inference.history {
+            assert!(!change.reason.is_empty());
+            assert!(
+                !change.triggered_by.value.is_empty(),
+                "a change must name the observation that caused it"
+            );
+        }
+        for pair in inference.history.windows(2) {
+            assert!(
+                (pair[0].to, pair[0].confidence) != (pair[1].to, pair[1].confidence),
+                "consecutive entries must represent a genuine move, not padding"
+            );
+        }
+
+        let final_change = inference.history.last().unwrap();
+        assert_eq!(final_change.to, Category::Computers);
+        assert_eq!(
+            final_change.triggered_by.value, "_ssh._tcp",
+            "the deciding observation must be named"
+        );
+    }
+
+    /// Evidence that changes nothing must not manufacture a timeline entry.
+    #[test]
+    fn evidence_that_changes_nothing_leaves_no_timeline_entry() {
+        let inference = infer(&[mac("a4:83:e7:11:22:33"), vendor("Apple")]);
+        assert!(
+            inference.history.is_empty(),
+            "nothing was concluded, so nothing should be recorded"
+        );
+    }
+
+    /// The timeline ends where the inference stands.
+    #[test]
+    fn the_timeline_agrees_with_the_final_conclusion() {
+        let inference = infer(&[hostname("HP-LaserJet"), service("_ipp._tcp")]);
+        assert_eq!(
+            inference.history.last().map(|c| c.to),
+            Some(inference.category)
+        );
+    }
+
+    // ---- device family ----
+
+    /// Family is a finer statement than category and needs definitive
+    /// evidence; it is never guessed from a vendor or a bare address.
+    #[test]
+    fn a_printer_service_yields_the_printer_family() {
+        let inference = infer(&[service("_ipp._tcp")]);
+        assert_eq!(inference.family, Some(DeviceFamily::Printer));
+    }
+
+    #[test]
+    fn a_gateway_role_yields_the_router_family() {
+        let inference = infer(&[Evidence::new(
+            EvidenceKind::GatewayRole,
+            "holds the default route",
+            DiscoveryMethod::DefaultRoute,
+        )]);
+        assert_eq!(inference.family, Some(DeviceFamily::Router));
+    }
+
+    #[test]
+    fn a_device_we_cannot_place_has_no_family() {
+        assert_eq!(infer(&[vendor("Apple")]).family, None);
+        assert_eq!(infer(&[]).family, None);
+    }
+
+    /// A category without definitive evidence must not acquire a family by
+    /// implication.
+    #[test]
+    fn a_medium_confidence_category_does_not_invent_a_family() {
+        let inference = infer(&[hostname("some-desktop"), vendor("Intel Corporate")]);
+        assert_eq!(inference.category, Category::Computers);
+        assert_eq!(inference.confidence, Confidence::Medium);
+        assert_eq!(
+            inference.family, None,
+            "a name is not enough to say which kind of computer"
+        );
     }
 }

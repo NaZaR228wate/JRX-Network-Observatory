@@ -9,6 +9,7 @@
 //! deliberately not part of passive discovery (TECH_DECISIONS.md ADR-009).
 
 pub mod mdns;
+pub mod quality;
 pub mod ssdp;
 
 use std::net::IpAddr;
@@ -39,23 +40,16 @@ pub enum SourceStatus {
     Failed { reason: String },
 }
 
-/// One source's contribution, so an empty result can always be explained.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SourceOutcome {
-    pub method: DiscoveryMethod,
-    pub label: &'static str,
-    pub status: SourceStatus,
-}
-
 /// Everything discovery produced.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiscoveryReport {
     pub devices: Vec<Device>,
     pub topology: Topology,
     pub summary: DiscoverySummary,
-    /// Per-source outcome. An empty device list means something different
-    /// depending on which of these failed (ARCHITECTURE.md §12).
-    pub sources: Vec<SourceOutcome>,
+    /// How much to trust this run, and why. An empty device list means
+    /// something different depending on whether our sources worked
+    /// (ARCHITECTURE.md §12).
+    pub quality: quality::DiscoveryQuality,
     pub took_ms: u64,
 }
 
@@ -88,10 +82,14 @@ pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError
     let mut sources = Vec::new();
 
     // --- ARP: devices the OS already knew about ---
-    sources.push(record(
-        DiscoveryMethod::ArpCache,
-        arp_result.as_ref().map(Vec::len),
-    ));
+    sources.push(quality::SourceQuality {
+        method: DiscoveryMethod::ArpCache,
+        label: DiscoveryMethod::ArpCache.label(),
+        status: status_of(arp_result.as_ref().map(Vec::len)),
+        observations: arp_result.as_ref().map_or(0, Vec::len),
+        names_resolved: 0,
+        services_seen: 0,
+    });
     if let Ok(entries) = &arp_result {
         for entry in entries {
             if !belongs_to_this_network(identity, entry.address) {
@@ -104,10 +102,32 @@ pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError
     }
 
     // --- mDNS: names and services ---
-    sources.push(record(
-        DiscoveryMethod::Mdns,
-        mdns_result.as_ref().map(Vec::len),
-    ));
+    // Counted distinctly: "20 observations" is far less informative than
+    // "6 names and 9 service types", which is what tells a user whether mDNS
+    // is actually producing identity rather than just noise.
+    let (names_resolved, services_seen) = mdns_result.as_ref().map_or((0, 0), |found| {
+        let mut names: Vec<&str> = Vec::new();
+        let mut types: Vec<&str> = Vec::new();
+        for service in found {
+            if let Some(host) = service.hostname.as_deref()
+                && !names.contains(&host)
+            {
+                names.push(host);
+            }
+            if !types.contains(&service.service_type.as_str()) {
+                types.push(&service.service_type);
+            }
+        }
+        (names.len(), types.len())
+    });
+    sources.push(quality::SourceQuality {
+        method: DiscoveryMethod::Mdns,
+        label: DiscoveryMethod::Mdns.label(),
+        status: status_of(mdns_result.as_ref().map(Vec::len)),
+        observations: mdns_result.as_ref().map_or(0, Vec::len),
+        names_resolved,
+        services_seen,
+    });
     if let Ok(services) = &mdns_result {
         for service in services {
             if !belongs_to_this_network(identity, service.address) {
@@ -122,10 +142,14 @@ pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError
     }
 
     // --- SSDP: routers, media devices, printers ---
-    sources.push(record(
-        DiscoveryMethod::Ssdp,
-        ssdp_result.as_ref().map(Vec::len),
-    ));
+    sources.push(quality::SourceQuality {
+        method: DiscoveryMethod::Ssdp,
+        label: DiscoveryMethod::Ssdp.label(),
+        status: status_of(ssdp_result.as_ref().map(Vec::len)),
+        observations: ssdp_result.as_ref().map_or(0, Vec::len),
+        names_resolved: 0,
+        services_seen: 0,
+    });
     if let Ok(responses) = &ssdp_result {
         for response in responses {
             let Some(address) = response.address.or_else(|| response.location_host()) else {
@@ -155,11 +179,19 @@ pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError
     let topology = Topology::build(&devices);
     let summary = DiscoverySummary::of(&devices);
 
+    // Devices other than ourselves and the router: this machine appearing on
+    // its own map is not evidence that discovery worked.
+    let others = devices
+        .iter()
+        .filter(|d| !d.is_self && !d.is_gateway)
+        .count();
+    let quality = quality::assess(&sources, others);
+
     Ok(DiscoveryReport {
         devices,
         topology,
         summary,
-        sources,
+        quality,
         took_ms: started.elapsed().as_millis() as u64,
     })
 }
@@ -176,15 +208,11 @@ fn belongs_to_this_network(identity: &NetworkIdentity, address: IpAddr) -> bool 
     identity.subnet.is_some_and(|subnet| subnet.contains(v4))
 }
 
-fn record(method: DiscoveryMethod, result: Result<usize, &ProbeError>) -> SourceOutcome {
-    SourceOutcome {
-        method,
-        label: method.label(),
-        status: match result {
-            Ok(observations) => SourceStatus::Ok { observations },
-            Err(e) => SourceStatus::Failed {
-                reason: e.to_string(),
-            },
+fn status_of(result: Result<usize, &ProbeError>) -> SourceStatus {
+    match result {
+        Ok(observations) => SourceStatus::Ok { observations },
+        Err(e) => SourceStatus::Failed {
+            reason: e.to_string(),
         },
     }
 }
