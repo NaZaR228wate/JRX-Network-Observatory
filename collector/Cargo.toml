@@ -17,3 +17,9 @@ serde_json = { workspace = true }
 
 [lints]
 workspace = true
+
+# CoreLocation is the only way to ask macOS whether Location Services is
+# authorised, which the Wi-Fi network name depends on. Confined to
+# macos/permissions.rs (TECH_DECISIONS.md ADR-006).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"

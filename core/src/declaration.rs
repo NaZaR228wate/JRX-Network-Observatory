@@ -48,11 +48,37 @@ pub enum Permission {
 }
 
 impl Permission {
+    pub const ALL: [Permission; 2] = [Permission::LocalNetwork, Permission::LocationServices];
+
     /// Human-readable name, shown inline in the Visibility Panel.
     pub fn label(self) -> &'static str {
         match self {
             Permission::LocalNetwork => "Local Network",
             Permission::LocationServices => "Location Services",
+        }
+    }
+
+    /// Whether the operating system will tell us the current state.
+    ///
+    /// macOS exposes Location Services authorisation through CoreLocation, but
+    /// provides no API at all for Local Network access. That asymmetry is a
+    /// fact about the platform, and the Visibility Panel must not paper over
+    /// it by reporting a guess as a status.
+    pub fn is_queryable(self) -> bool {
+        match self {
+            Permission::LocationServices => true,
+            Permission::LocalNetwork => false,
+        }
+    }
+
+    /// Where the user goes to change it. An "Available" row without a route to
+    /// fixing it is just a complaint.
+    pub fn grant_hint(self) -> &'static str {
+        match self {
+            Permission::LocalNetwork => "System Settings → Privacy & Security → Local Network",
+            Permission::LocationServices => {
+                "System Settings → Privacy & Security → Location Services"
+            }
         }
     }
 }

@@ -1,9 +1,20 @@
 // Mirrors the serialised shapes from jrx-core. Host -> UI only; the renderer
 // never sends these back (ARCHITECTURE.md §10).
 
+export type Permission = "local_network" | "location_services";
+
+export type PermissionState =
+  | "granted"
+  | "denied"
+  | "not_requested"
+  | "unknown";
+
+/** Whether the OS actually told us, or we simply cannot ask. */
+export type Certainty = "confirmed" | "unverifiable";
+
 export type CapabilityState =
   | { state: "observed"; mechanism: string }
-  | { state: "available"; missing: string }
+  | { state: "available"; missing: Permission; certainty: Certainty }
   | { state: "not_possible"; reason: string };
 
 export interface CapabilityRow {
@@ -12,9 +23,19 @@ export interface CapabilityRow {
   state: CapabilityState;
 }
 
+export interface PermissionInfo {
+  permission: Permission;
+  label: string;
+  grant_hint: string;
+  queryable: boolean;
+  state: PermissionState;
+}
+
 export interface CapabilityMatrix {
   rows: CapabilityRow[];
-  refused: { class: string }[];
+  refused: { class: string; rationale: string }[];
+  limitations: { describes: string; reason: string }[];
+  permissions: PermissionInfo[];
 }
 
 export type ConnectionType =

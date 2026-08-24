@@ -81,6 +81,38 @@ impl DataClass {
     pub fn is_refused_by_design(self) -> bool {
         Self::REFUSED.contains(&self)
     }
+
+    /// Why JRX refuses it. Empty for permitted classes.
+    ///
+    /// This text is the fourth column of the Visibility Panel and the clearest
+    /// statement of what the product is: things it could build and will not.
+    pub fn refusal_rationale(self) -> &'static str {
+        match self {
+            DataClass::PacketPayload => {
+                "Reading packet contents would require administrator access and \
+                 would expose the contents of everything you send. JRX has no \
+                 capture library at all, so this cannot be switched on."
+            }
+            DataClass::DnsQueryHistory => {
+                "A record of every name you look up is a record of everywhere \
+                 you go. JRX reads which resolvers you use, never what you \
+                 asked them."
+            }
+            DataClass::BrowsingHistory => {
+                "Which sites you visit is yours. JRX never reads it, from the \
+                 browser or from the network."
+            }
+            DataClass::Credential => {
+                "Passwords, cookies and tokens are never read, stored, or \
+                 transmitted. Nothing in JRX asks for them."
+            }
+            DataClass::ProcessCommandLine => {
+                "Full command lines leak file paths, tokens and arguments. JRX \
+                 shows which program owns a connection, not how it was started."
+            }
+            _ => "",
+        }
+    }
 }
 
 #[cfg(test)]

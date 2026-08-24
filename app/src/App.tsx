@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { connectionLabel, networkLine } from "./labels";
+import { VisibilityPanel } from "./VisibilityPanel";
 import type { CapabilityMatrix, NetworkIdentityReport } from "./types";
 import "./styles.css";
 
@@ -42,6 +43,9 @@ export function App() {
   const observed = caps?.rows.filter((r) => r.state.state === "observed").length ?? 0;
   const available = caps?.rows.filter((r) => r.state.state === "available").length ?? 0;
   const refused = caps?.refused.length ?? 0;
+  const blocked =
+    (caps?.rows.filter((r) => r.state.state === "not_possible").length ?? 0) +
+    (caps?.limitations.length ?? 0);
 
   return (
     <div className="shell">
@@ -122,15 +126,18 @@ export function App() {
             <div className="vis">
               <span className="pill ok">{observed} observed</span>
               <span className="pill warn">{available} need permission</span>
+              <span className="pill off">{blocked} not possible</span>
               <span className="pill">{refused} refused by design</span>
             </div>
             <div className="note">
               JRX runs without administrator access and collects no packet
-              contents. The full breakdown arrives with the Visibility Panel.
+              contents.
             </div>
           </dd>
         </div>
       </dl>
+
+      {caps && <VisibilityPanel matrix={caps} />}
     </div>
   );
 }
