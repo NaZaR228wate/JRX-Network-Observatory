@@ -56,6 +56,20 @@ fn get_network_identity() -> Result<NetworkIdentityReport, String> {
     })
 }
 
+/// Discover devices on the current network.
+///
+/// Passive only: the ARP cache is read with nothing sent, and mDNS/SSDP emit
+/// the same multicast queries every device on the network already sends. No
+/// subnet sweep runs here (TECH_DECISIONS.md ADR-009).
+///
+/// Not yet called by the UI — the topology lands in M4. Present now so the
+/// backend seam is fixed and testable.
+#[tauri::command]
+fn discover_devices() -> Result<jrx_collector::discovery::DiscoveryReport, String> {
+    let identity = jrx_collector::identity::observe().map_err(|e| e.to_string())?;
+    jrx_collector::discovery::observe(&identity).map_err(|e| e.to_string())
+}
+
 /// Open the System Settings pane where a permission can be granted.
 ///
 /// Takes a typed `Permission`, never a URL. The renderer cannot ask the host
@@ -92,6 +106,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_capabilities,
             get_network_identity,
+            discover_devices,
             open_privacy_settings
         ])
         .run(tauri::generate_context!())

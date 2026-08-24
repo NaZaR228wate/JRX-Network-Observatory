@@ -295,6 +295,15 @@ mod tests {
 }
 
 impl Subnet {
+    /// Whether an address belongs to this subnet.
+    ///
+    /// Used to keep discovery to "your network": link-local addresses from
+    /// devices that failed DHCP, and anything routed elsewhere, are not part
+    /// of the local picture.
+    pub fn contains(self, address: Ipv4Addr) -> bool {
+        Subnet::of(address, self.prefix_len).is_some_and(|s| s.network == self.network)
+    }
+
     /// Mask an address down to its network address.
     fn of(addr: Ipv4Addr, prefix_len: u8) -> Option<Subnet> {
         if prefix_len > 32 {
@@ -364,6 +373,41 @@ impl NetworkIdentity {
             wifi,
             vpn_active: connection == ConnectionType::Vpn,
         }
+    }
+}
+
+#[cfg(test)]
+mod subnet_tests {
+    use super::*;
+
+    fn subnet(net: &str, prefix: u8) -> Subnet {
+        Subnet {
+            network: net.parse().unwrap(),
+            prefix_len: prefix,
+        }
+    }
+
+    /// The development machine sits on a /23, where assuming /24 would place
+    /// half the network outside its own subnet.
+    #[test]
+    fn a_slash_23_spans_both_halves() {
+        let s = subnet("172.16.0.0", 23);
+        assert!(s.contains("172.16.0.89".parse().unwrap()));
+        assert!(s.contains("172.16.1.200".parse().unwrap()));
+        assert!(!s.contains("172.16.2.1".parse().unwrap()));
+    }
+
+    #[test]
+    fn link_local_addresses_are_outside_a_normal_subnet() {
+        let s = subnet("192.168.1.0", 24);
+        assert!(!s.contains("169.254.6.83".parse().unwrap()));
+    }
+
+    #[test]
+    fn a_slash_32_contains_only_itself() {
+        let s = subnet("10.0.0.5", 32);
+        assert!(s.contains("10.0.0.5".parse().unwrap()));
+        assert!(!s.contains("10.0.0.6".parse().unwrap()));
     }
 }
 

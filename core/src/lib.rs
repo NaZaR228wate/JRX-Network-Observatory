@@ -5,5 +5,7 @@
 pub mod capability;
 pub mod data_class;
 pub mod declaration;
+pub mod device;
 pub mod network;
 pub mod signal;
+pub mod topology;

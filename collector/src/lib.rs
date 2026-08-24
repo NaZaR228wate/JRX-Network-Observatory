@@ -2,8 +2,10 @@
 //!
 //! No Tauri dependency, by design (ARCHITECTURE.md §4, §15).
 
+pub mod discovery;
 pub mod identity;
 #[cfg(target_os = "macos")]
 pub mod macos;
+pub mod oui;
 pub mod probe;
 pub mod registry;

@@ -13,7 +13,9 @@ license.workspace = true
 [dependencies]
 jrx-core = { workspace = true }
 thiserror = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
+mdns-sd = { version = "0.21", default-features = false }
 
 [lints]
 workspace = true

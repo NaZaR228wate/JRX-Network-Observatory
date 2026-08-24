@@ -16,6 +16,7 @@ const NETSTAT: &str = "/usr/sbin/netstat";
 const IFCONFIG: &str = "/sbin/ifconfig";
 const NETWORKSETUP: &str = "/usr/sbin/networksetup";
 const SCUTIL: &str = "/usr/sbin/scutil";
+const ARP: &str = "/usr/sbin/arp";
 const SYSTEM_PROFILER: &str = "/usr/sbin/system_profiler";
 
 fn run(program: &str, args: &[&str]) -> Result<String, ProbeError> {
@@ -44,6 +45,11 @@ pub fn interfaces() -> Result<String, ProbeError> {
 
 pub fn hardware_ports() -> Result<String, ProbeError> {
     run(NETWORKSETUP, &["-listallhardwareports"])
+}
+
+/// The neighbour cache. A read of existing OS state; nothing is transmitted.
+pub fn arp_table() -> Result<String, ProbeError> {
+    run(ARP, &["-an"])
 }
 
 pub fn dns_configuration() -> Result<String, ProbeError> {
