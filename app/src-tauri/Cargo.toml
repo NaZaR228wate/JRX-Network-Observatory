@@ -1,0 +1,26 @@
+# jrx-app — the Tauri host. Command handlers and the event bus.
+#
+# This is the ONLY crate permitted to depend on Tauri (ARCHITECTURE.md §4).
+[package]
+name = "jrx-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+name = "jrx_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+jrx-core = { workspace = true }
+jrx-collector = { workspace = true }
+tauri = { version = "2", features = [] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,18 @@
+# jrx-core — domain model, classification, capability matrix.
+#
+# ARCHITECTURE.md §4: this crate MUST NOT depend on the operating system,
+# the network, or Tauri. It is pure logic over typed inputs so that every
+# rule in it is unit-testable offline and deterministically.
+[package]
+name = "jrx-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

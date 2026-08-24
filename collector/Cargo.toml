@@ -1,0 +1,18 @@
+# jrx-collector — platform probes. The only OS-facing code in the system.
+#
+# ARCHITECTURE.md §4: this crate MUST NOT depend on Tauri. It exposes a
+# transport-agnostic API so the same crate can later be wrapped in a daemon
+# without touching core or the UI (ARCHITECTURE.md §15).
+[package]
+name = "jrx-collector"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+jrx-core = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

@@ -5,3 +5,8 @@ node_modules/
 dist/
 build/
 *.log
+target/
+.cargo/
+
+# Tauri build-time generated schemas
+app/src-tauri/gen/schemas/
