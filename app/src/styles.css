@@ -1,0 +1,88 @@
+:root {
+  --bg: #0b0f14;
+  --panel: #121820;
+  --line: #1f2933;
+  --text: #e6edf3;
+  --muted: #8b98a5;
+  --accent: #4cc2ff;
+  --warn: #f0b429;
+  --ok: #3fb950;
+  --off: #6e7681;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.shell { max-width: 780px; margin: 0 auto; padding: 40px 32px 64px; }
+
+.brand {
+  display: flex; align-items: baseline; gap: 10px;
+  margin-bottom: 4px;
+}
+.brand h1 {
+  font-size: 15px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; margin: 0;
+}
+.brand .tag { color: var(--muted); font-size: 13px; }
+
+.headline {
+  font-size: 30px; font-weight: 600; letter-spacing: -0.02em;
+  margin: 22px 0 2px;
+}
+.sub { color: var(--muted); margin: 0 0 30px; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 4px 20px;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  gap: 20px;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+}
+.row:last-child { border-bottom: none; }
+.row dt { color: var(--muted); font-size: 13px; padding-top: 1px; }
+.row dd { margin: 0; }
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-size: 13.5px;
+}
+
+.note { color: var(--muted); font-size: 12.5px; margin-top: 5px; }
+
+.path { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.hop {
+  border: 1px solid var(--line); border-radius: 6px;
+  padding: 3px 9px; background: #0d1219;
+}
+.hop.self { border-color: var(--accent); color: var(--accent); }
+.arrow { color: var(--off); }
+
+.pill {
+  display: inline-block; font-size: 11px; letter-spacing: 0.06em;
+  text-transform: uppercase; padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--line); color: var(--muted);
+}
+.pill.ok { color: var(--ok); border-color: #1d3d29; }
+.pill.warn { color: var(--warn); border-color: #453310; }
+.pill.off { color: var(--off); }
+
+.vis { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 7px; }
+.state { color: var(--muted); }
+.err { color: var(--warn); }

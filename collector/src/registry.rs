@@ -34,6 +34,16 @@ pub static ALL_PROBES: &[ProbeDeclaration] = &[
         platforms: DESKTOP,
     },
     ProbeDeclaration {
+        id: ProbeId::Dns,
+        posture: Posture::Passive,
+        describes: "Which DNS resolvers this device uses",
+        mechanism: "System resolver configuration",
+        requires: &[],
+        // Which resolvers are configured -- never what was resolved.
+        reads: &[DataClass::DnsResolverConfig],
+        platforms: DESKTOP,
+    },
+    ProbeDeclaration {
         id: ProbeId::Wifi,
         posture: Posture::Passive,
         describes: "Network name, band and signal strength",

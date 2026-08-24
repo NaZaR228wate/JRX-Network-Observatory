@@ -28,6 +28,12 @@ pub enum DataClass {
     ServiceAdvertisement,
     /// Whether a host on the local subnet answers an ICMP echo.
     HostLiveness,
+    /// Which DNS resolvers this device is configured to use.
+    ///
+    /// Deliberately distinct from `DnsQueryHistory`: knowing which resolver
+    /// is configured is ordinary network configuration, while recording what
+    /// was looked up is refused outright.
+    DnsResolverConfig,
 
     // ---- Refused by design: never collected, at any version ----
     /// Contents of network packets.
@@ -44,7 +50,7 @@ pub enum DataClass {
 
 impl DataClass {
     /// Every variant, in declaration order.
-    pub const ALL: [DataClass; 13] = [
+    pub const ALL: [DataClass; 14] = [
         DataClass::InterfaceMetadata,
         DataClass::RouteTable,
         DataClass::WifiAssociation,
@@ -53,6 +59,7 @@ impl DataClass {
         DataClass::SocketTable,
         DataClass::ServiceAdvertisement,
         DataClass::HostLiveness,
+        DataClass::DnsResolverConfig,
         DataClass::PacketPayload,
         DataClass::DnsQueryHistory,
         DataClass::BrowsingHistory,
@@ -88,6 +95,43 @@ mod tests {
     #[test]
     fn neighbor_table_is_permitted() {
         assert!(!DataClass::NeighborTable.is_refused_by_design());
+    }
+
+    /// Reading which resolvers are configured is not the same as recording
+    /// what was resolved. The first is ordinary network configuration; the
+    /// second is refused outright. Keeping them as separate variants is what
+    /// stops the distinction from eroding.
+    #[test]
+    fn resolver_config_is_permitted_but_query_history_is_refused() {
+        assert!(!DataClass::DnsResolverConfig.is_refused_by_design());
+        assert!(DataClass::DnsQueryHistory.is_refused_by_design());
+    }
+
+    /// ALL is maintained by hand, so nothing stops a new variant from being
+    /// omitted -- and an omitted variant is invisible to every audit that
+    /// iterates it. The exhaustive match below fails to compile when a variant
+    /// is added, and the length assertion fails when ALL was not updated.
+    #[test]
+    fn all_lists_every_variant() {
+        for class in DataClass::ALL {
+            match class {
+                DataClass::InterfaceMetadata
+                | DataClass::RouteTable
+                | DataClass::WifiAssociation
+                | DataClass::NeighborTable
+                | DataClass::InterfaceCounters
+                | DataClass::SocketTable
+                | DataClass::ServiceAdvertisement
+                | DataClass::HostLiveness
+                | DataClass::DnsResolverConfig
+                | DataClass::PacketPayload
+                | DataClass::DnsQueryHistory
+                | DataClass::BrowsingHistory
+                | DataClass::Credential
+                | DataClass::ProcessCommandLine => {}
+            }
+        }
+        assert_eq!(DataClass::ALL.len(), 14, "a variant is missing from ALL");
     }
 
     #[test]

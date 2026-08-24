@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 pub enum ProbeId {
     Interfaces,
     Routes,
+    Dns,
     Wifi,
     Arp,
     IfCounters,
