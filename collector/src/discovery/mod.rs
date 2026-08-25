@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 use jrx_core::device::{Device, DeviceTable, DiscoveryMethod, Observation};
 use jrx_core::network::NetworkIdentity;
-use jrx_core::topology::{DiscoverySummary, Topology};
+use jrx_core::topology::{DiscoverySummary, Topology, TopologyOverview};
 use serde::Serialize;
 
 use crate::oui;
@@ -44,6 +44,8 @@ pub enum SourceStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct DiscoveryReport {
     pub devices: Vec<Device>,
+    /// Level 1: the whole network at a glance, bounded regardless of size.
+    pub overview: TopologyOverview,
     pub topology: Topology,
     pub summary: DiscoverySummary,
     /// How much to trust this run, and why. An empty device list means
@@ -53,13 +55,53 @@ pub struct DiscoveryReport {
     pub took_ms: u64,
 }
 
-/// Discover devices on the current network.
+/// A step in a discovery run, reported as it happens.
 ///
-/// Sources run concurrently: the ARP read returns in milliseconds while the
-/// multicast sources are still listening, so the map populates immediately and
-/// then enriches.
+/// The multicast sources listen for three seconds. Showing nothing for three
+/// seconds would be a blank loading screen, so the fast source reports first
+/// and the map fills in behind it (ARCHITECTURE.md §7.1).
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "stage", rename_all = "snake_case")]
+pub enum DiscoveryStage {
+    /// Listening has begun.
+    Started,
+    /// One source finished. Reported individually so progress is honest:
+    /// the total amount of work is unknown, so there is no percentage to show.
+    SourceFinished { source: quality::SourceQuality },
+    /// What is known so far. Emitted after the neighbour cache is read, which
+    /// takes milliseconds.
+    ///
+    /// Boxed: this variant carries a whole overview and device list, and is
+    /// sent at most once per run, so the other variants should not pay for its
+    /// size.
+    Partial(Box<PartialDiscovery>),
+}
+
+/// A snapshot of what discovery knows part-way through a run.
+#[derive(Debug, Clone, Serialize)]
+pub struct PartialDiscovery {
+    pub overview: TopologyOverview,
+    pub devices: Vec<Device>,
+}
+
+/// Discover devices on the current network.
 pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError> {
+    observe_with_progress(identity, &|_| {})
+}
+
+/// Discover devices, reporting each stage as it completes.
+///
+/// Sources run concurrently and are joined in order of expected speed: the ARP
+/// read returns in milliseconds while the multicast sources are still
+/// listening, so the map populates immediately and then enriches.
+pub fn observe_with_progress(
+    identity: &NetworkIdentity,
+    on_stage: &(dyn Fn(DiscoveryStage) + Sync),
+) -> Result<DiscoveryReport, ProbeError> {
     let started = Instant::now();
+
+    on_stage(DiscoveryStage::Started);
+    let panicked = || ProbeError::Failed("discovery thread panicked".into());
 
     let (arp_result, mdns_result, ssdp_result) = std::thread::scope(|scope| {
         let arp = scope.spawn(read_arp);
@@ -70,10 +112,27 @@ pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError
                 "no local address on the interface carrying the default route".into(),
             )),
         });
-        (arp.join(), mdns.join(), ssdp.join())
+
+        // Joined in order of expected speed, not spawn order. The neighbour
+        // cache is ready almost immediately; waiting for the multicast window
+        // before showing it would waste the only fast source we have.
+        let arp_result = arp.join();
+        if let Ok(entries) = &arp_result {
+            on_stage(DiscoveryStage::SourceFinished {
+                source: arp_quality(entries.as_ref().map(Vec::len)),
+            });
+            if let Ok(entries) = entries {
+                let devices = partial_devices(identity, entries);
+                on_stage(DiscoveryStage::Partial(Box::new(PartialDiscovery {
+                    overview: TopologyOverview::build(&devices),
+                    devices,
+                })));
+            }
+        }
+
+        (arp_result, mdns.join(), ssdp.join())
     });
 
-    let panicked = || ProbeError::Failed("discovery thread panicked".into());
     let arp_result = arp_result.map_err(|_| panicked())?;
     let mdns_result = mdns_result.map_err(|_| panicked())?;
     let ssdp_result = ssdp_result.map_err(|_| panicked())?;
@@ -82,14 +141,7 @@ pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError
     let mut sources = Vec::new();
 
     // --- ARP: devices the OS already knew about ---
-    sources.push(quality::SourceQuality {
-        method: DiscoveryMethod::ArpCache,
-        label: DiscoveryMethod::ArpCache.label(),
-        status: status_of(arp_result.as_ref().map(Vec::len)),
-        observations: arp_result.as_ref().map_or(0, Vec::len),
-        names_resolved: 0,
-        services_seen: 0,
-    });
+    sources.push(arp_quality(arp_result.as_ref().map(Vec::len)));
     if let Ok(entries) = &arp_result {
         for entry in entries {
             if !belongs_to_this_network(identity, entry.address) {
@@ -176,6 +228,7 @@ pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError
     }
 
     let devices = table.finish(oui::vendor_of);
+    let overview = TopologyOverview::build(&devices);
     let topology = Topology::build(&devices);
     let summary = DiscoverySummary::of(&devices);
 
@@ -189,6 +242,7 @@ pub fn observe(identity: &NetworkIdentity) -> Result<DiscoveryReport, ProbeError
 
     Ok(DiscoveryReport {
         devices,
+        overview,
         topology,
         summary,
         quality,
@@ -206,6 +260,49 @@ fn belongs_to_this_network(identity: &NetworkIdentity, address: IpAddr) -> bool 
         return false; // IPv6 neighbours land in a later milestone
     };
     identity.subnet.is_some_and(|subnet| subnet.contains(v4))
+}
+
+fn arp_quality(result: Result<usize, &ProbeError>) -> quality::SourceQuality {
+    quality::SourceQuality {
+        method: DiscoveryMethod::ArpCache,
+        label: DiscoveryMethod::ArpCache.label(),
+        status: status_of(result),
+        observations: result.unwrap_or(0),
+        names_resolved: 0,
+        services_seen: 0,
+    }
+}
+
+/// The devices knowable from the neighbour cache alone.
+///
+/// Deliberately excludes the gateway and self marks: those are added once, at
+/// the end, so a device does not change identity between the partial and final
+/// pictures.
+#[cfg(target_os = "macos")]
+fn partial_devices(
+    identity: &NetworkIdentity,
+    entries: &[crate::macos::arp::ArpEntry],
+) -> Vec<Device> {
+    let mut table = DeviceTable::new();
+    for entry in entries {
+        if belongs_to_this_network(identity, entry.address) {
+            table.observe(
+                Observation::new(entry.address, DiscoveryMethod::ArpCache).with_mac(entry.mac),
+            );
+        }
+    }
+    if let Some(gateway) = identity.gateway {
+        table.mark_gateway(gateway);
+    }
+    if let Some(local) = identity.local_ip {
+        table.mark_self(IpAddr::V4(local));
+    }
+    table.finish(oui::vendor_of)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn partial_devices(_: &NetworkIdentity, _: &[ArpStub]) -> Vec<Device> {
+    Vec::new()
 }
 
 fn status_of(result: Result<usize, &ProbeError>) -> SourceStatus {

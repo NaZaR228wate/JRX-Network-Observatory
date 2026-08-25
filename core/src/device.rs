@@ -7,7 +7,7 @@
 use std::fmt;
 use std::net::IpAddr;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// A hardware address.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -226,7 +226,7 @@ impl Evidence {
 }
 
 /// The five categories. Unknown is a legitimate, informative outcome.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
     Computers,

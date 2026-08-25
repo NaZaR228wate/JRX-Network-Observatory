@@ -11,6 +11,7 @@ use jrx_core::capability::{CapabilityMatrix, PermissionSet};
 use jrx_core::declaration::{Permission, Platform};
 use jrx_core::network::NetworkIdentity;
 use serde::Serialize;
+use tauri::{Emitter, Manager};
 
 /// Everything JRX can and cannot see, here and now.
 ///
@@ -56,18 +57,70 @@ fn get_network_identity() -> Result<NetworkIdentityReport, String> {
     })
 }
 
-/// Discover devices on the current network.
+/// Discover devices on the current network, reporting progress as it happens.
 ///
 /// Passive only: the ARP cache is read with nothing sent, and mDNS/SSDP emit
 /// the same multicast queries every device on the network already sends. No
 /// subnet sweep runs here (TECH_DECISIONS.md ADR-009).
 ///
-/// Not yet called by the UI — the topology lands in M4. Present now so the
-/// backend seam is fixed and testable.
+/// Returns immediately and streams stages over `discovery://stage`, finishing
+/// with `discovery://complete`. The multicast sources listen for three
+/// seconds; blocking the UI for that long would be the blank loading screen
+/// this design exists to avoid.
 #[tauri::command]
-fn discover_devices() -> Result<jrx_collector::discovery::DiscoveryReport, String> {
-    let identity = jrx_collector::identity::observe().map_err(|e| e.to_string())?;
-    jrx_collector::discovery::observe(&identity).map_err(|e| e.to_string())
+fn start_discovery(app: tauri::AppHandle) {
+    std::thread::spawn(move || {
+        let identity = match jrx_collector::identity::observe() {
+            Ok(identity) => identity,
+            Err(e) => {
+                let _ = app.emit("discovery://failed", e.to_string());
+                return;
+            }
+        };
+
+        let emit = |stage: jrx_collector::discovery::DiscoveryStage| {
+            let _ = app.emit("discovery://stage", stage);
+        };
+
+        match jrx_collector::discovery::observe_with_progress(&identity, &emit) {
+            Ok(report) => {
+                if let Ok(mut held) = app.state::<LastDiscovery>().0.lock() {
+                    *held = Some(report.clone());
+                }
+                let _ = app.emit("discovery://complete", report);
+            }
+            Err(e) => {
+                let _ = app.emit("discovery://failed", e.to_string());
+            }
+        }
+    });
+}
+
+/// The most recent discovery result, held by the host.
+///
+/// The renderer is untrusted (ARCHITECTURE.md §5), so it never sends device
+/// data back for the host to act on. It asks for a view by typed category and
+/// page number, and the host derives it from what it already holds.
+#[derive(Default)]
+struct LastDiscovery(std::sync::Mutex<Option<jrx_collector::discovery::DiscoveryReport>>);
+
+/// One category's members, paginated.
+///
+/// Pure re-derivation from the last discovery result. Opening a group performs
+/// no network work at all, so it is instant and emits nothing.
+#[tauri::command]
+fn group_view(
+    state: tauri::State<'_, LastDiscovery>,
+    category: jrx_core::device::Category,
+    page: usize,
+) -> Result<jrx_core::topology::GroupView, String> {
+    let held = state.0.lock().map_err(|_| "discovery state poisoned")?;
+    let report = held.as_ref().ok_or("no discovery has completed yet")?;
+    Ok(jrx_core::topology::GroupView::build(
+        &report.devices,
+        category,
+        page,
+    ))
 }
 
 /// Open the System Settings pane where a permission can be granted.
@@ -103,10 +156,12 @@ fn open_privacy_settings(_permission: Permission) -> Result<(), String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(LastDiscovery::default())
         .invoke_handler(tauri::generate_handler![
             get_capabilities,
             get_network_identity,
-            discover_devices,
+            start_discovery,
+            group_view,
             open_privacy_settings
         ])
         .run(tauri::generate_context!())

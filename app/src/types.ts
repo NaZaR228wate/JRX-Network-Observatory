@@ -84,3 +84,182 @@ export interface NetworkIdentityReport {
   identity: NetworkIdentity;
   observed_in_ms: number;
 }
+
+// ---- devices ----
+
+export type Category =
+  | "computers"
+  | "phones"
+  | "smart_home"
+  | "infrastructure"
+  | "unknown";
+
+export type Confidence = "high" | "medium" | "none";
+
+export type DiscoverySource =
+  | "arp_cache"
+  | "mdns"
+  | "ssdp"
+  | "self_interface"
+  | "default_route";
+
+export type EvidenceKind =
+  | "mac_address"
+  | "hostname"
+  | "service_type"
+  | "upnp_device_type"
+  | "vendor"
+  | "gateway_role"
+  | "self_role";
+
+export interface Evidence {
+  kind: EvidenceKind;
+  value: string;
+  method: DiscoverySource;
+}
+
+/** Only what was observed. No conclusions. */
+export interface ObservedFacts {
+  addresses: string[];
+  mac: string | null;
+  hostname: string | null;
+  vendor: string | null;
+  services: string[];
+  upnp_types: string[];
+  sources: DiscoverySource[];
+  mac_randomised: boolean;
+}
+
+export interface CategoryChange {
+  from: Category;
+  to: Category;
+  confidence: Confidence;
+  reason: string;
+  triggered_by: Evidence;
+}
+
+/** What JRX decided, and why. Kept apart from the facts on purpose. */
+export interface CategoryInference {
+  category: Category;
+  confidence: Confidence;
+  family: string | null;
+  rationale: string;
+  /** Only the evidence that produced the conclusion. Never a vendor. */
+  supporting: Evidence[];
+  history: CategoryChange[];
+}
+
+export interface Device {
+  id: string;
+  facts: ObservedFacts;
+  inference: CategoryInference;
+  evidence: Evidence[];
+  is_self: boolean;
+  is_gateway: boolean;
+}
+
+// ---- topology ----
+
+/** Carries everything needed to draw a node and explain it in place. */
+export interface TopologyNode {
+  device_id: string;
+  display_name: string;
+  category: Category;
+  confidence: Confidence;
+  family: string | null;
+  rationale: string;
+  evidence: Evidence[];
+  vendor: string | null;
+  mac_randomised: boolean;
+  sources: DiscoverySource[];
+  is_self: boolean;
+  is_gateway: boolean;
+}
+
+/** A measured observation about a group — never a category. */
+export interface GroupFact {
+  count: number;
+  description: string;
+  is_category: boolean;
+}
+
+export interface CategorySummary {
+  category: Category;
+  label: string;
+  count: number;
+  facts: GroupFact[];
+  facts_are_independent: boolean;
+  collapsed_by_default: boolean;
+}
+
+export interface TopologyOverview {
+  center: TopologyNode | null;
+  self_node: TopologyNode | null;
+  groups: CategorySummary[];
+  total: number;
+}
+
+export interface GroupView {
+  category: Category;
+  label: string;
+  total: number;
+  facts: GroupFact[];
+  facts_are_independent: boolean;
+  page: number;
+  page_size: number;
+  page_count: number;
+  devices: TopologyNode[];
+}
+
+// ---- discovery ----
+
+export type SourceStatus =
+  | { status: "ok"; observations: number }
+  | { status: "failed"; reason: string };
+
+export interface SourceQuality {
+  method: DiscoverySource;
+  label: string;
+  status: SourceStatus;
+  observations: number;
+  names_resolved: number;
+  services_seen: number;
+}
+
+export type DiscoveryVerdict =
+  | "healthy"
+  | "degraded"
+  | "discovery_blocked"
+  | "network_appears_empty";
+
+export type LocalNetworkInference = "working" | "likely_blocked" | "undetermined";
+
+export interface DiscoveryQuality {
+  verdict: DiscoveryVerdict;
+  explanation: string;
+  sources: SourceQuality[];
+  local_network: LocalNetworkInference;
+}
+
+export type Isolation = "likely_isolated" | "normal";
+
+export interface DiscoverySummary {
+  total: number;
+  unidentified: number;
+  by_category: [Category, number][];
+  isolation: Isolation;
+}
+
+export interface DiscoveryReport {
+  devices: Device[];
+  overview: TopologyOverview;
+  summary: DiscoverySummary;
+  quality: DiscoveryQuality;
+  took_ms: number;
+}
+
+/** Streamed while discovery runs, so the map is never a blank screen. */
+export type DiscoveryStage =
+  | { stage: "started" }
+  | { stage: "source_finished"; source: SourceQuality }
+  | { stage: "partial"; overview: TopologyOverview; devices: Device[] };

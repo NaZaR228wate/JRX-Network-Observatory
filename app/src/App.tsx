@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { connectionLabel, networkLine } from "./labels";
+import { Topology } from "./topology/Topology";
 import { VisibilityPanel } from "./VisibilityPanel";
 import type { CapabilityMatrix, NetworkIdentityReport } from "./types";
 import "./styles.css";
@@ -136,6 +137,8 @@ export function App() {
           </dd>
         </div>
       </dl>
+
+      <Topology />
 
       {caps && <VisibilityPanel matrix={caps} />}
     </div>
