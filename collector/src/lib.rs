@@ -2,6 +2,7 @@
 //!
 //! No Tauri dependency, by design (ARCHITECTURE.md §4, §15).
 
+pub mod activity;
 pub mod discovery;
 pub mod fixtures;
 pub mod identity;

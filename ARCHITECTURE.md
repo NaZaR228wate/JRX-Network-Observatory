@@ -350,14 +350,20 @@ What is available without elevation, and what is not, stated precisely:
 - **Available:** per-interface throughput from counter deltas (accurate); the set
   of active remote endpoints with owning process; reverse-DNS and bundled-ASN
   attribution of those endpoints.
-- **Not available:** per-connection byte counts, per-application bandwidth, and
-  any historical per-destination volume. These require BPF or ETW, and therefore
-  root or admin.
+- **Not available:** any historical per-destination volume beyond what the OS
+  keeps, and any view of another device's traffic.
+- **Corrected in M5 phase 0:** this section previously claimed per-application
+  bandwidth requires administrator access. On macOS that is false.
+  `/usr/bin/nettop` reports bytes per socket with the owning process, system
+  wide, unprivileged, at ~9 ms per sample. Measured, not assumed — see
+  [docs/M5_PHASE0_FEASIBILITY.md](docs/M5_PHASE0_FEASIBILITY.md). The Windows
+  equivalent remains unproven.
 
-The UI must never imply otherwise. The traffic view shows *total throughput* and
-*who you are connected to* — it does not draw a bandwidth-per-destination chart,
-because that number does not exist at this privilege level. This limitation is an
-explicit Visibility Panel row.
+What genuinely does not exist at this privilege level is the *identity* of the
+far end. Reverse DNS resolved nothing for 12 of 12 live endpoints, and the only
+reliable IP-to-domain source is DNS query observation, which JRX refuses by
+design. The traffic view therefore shows which programs are talking, how much,
+and to whose network — and states plainly that it does not know which sites.
 
 ---
 

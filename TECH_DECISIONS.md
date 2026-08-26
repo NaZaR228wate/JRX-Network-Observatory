@@ -441,6 +441,61 @@ be made to fabricate a network on command is a binary that can lie.
 
 ---
 
+## ADR-018 — Run Apple's `nettop`; never link the framework behind it
+
+**Context.** Per-process byte counts are the substance of an activity view.
+`/usr/bin/nettop` provides them unprivileged, system wide, at ~9 ms per sample.
+It links `/System/Library/PrivateFrameworks/NetworkStatistics.framework`.
+
+**Decision.** Shell out to the shipped binary. Never link the framework.
+
+**Rejected — linking NetworkStatistics directly.** Removes a process spawn and
+the 15-character name truncation. It is a private API: undocumented, free to
+change between OS versions, and grounds for App Store rejection.
+
+**Rejected — deriving per-process bytes from the socket table.** Would mean
+inventing numbers from the existence of a connection, which is the specific
+dishonesty ADR-008 exists to prevent.
+
+**Consequences.**
+- Two process spawns per refresh; 12.9 ms total, 1.3% of one core at 1 Hz.
+- Process names arrive truncated at 15 characters and are completed from the
+  PID via `proc_pidpath`, which is native and documented. An exited process
+  keeps the truncated name, flagged as truncated.
+- **Cost:** the first call after boot takes 6.3 seconds while `nettop`
+  initialises. It must be warmed at startup.
+
+---
+
+## ADR-019 — No IP-to-domain mapping, at all
+
+**Context.** Users expect a traffic view to name websites.
+
+**Decision.** JRX does not map addresses to domains. The field exists in the
+model and is permanently `None`.
+
+**Evidence.** Reverse DNS was measured against 12 live endpoints on this
+machine and resolved **zero** of them — Cloudflare, Apple, Google Cloud and
+Telegram publish no PTR records. Where it does resolve, it names the host that
+answered, not the site requested: one address fronts millions of sites.
+
+**Rejected — observing DNS queries.** It is the only reliable source, and it
+is precisely what `DataClass::DnsQueryHistory` refuses. A record of every name
+you look up is a record of everywhere you go.
+
+**Rejected — online ASN or WHOIS lookup.** Would disclose every address this
+Mac contacts to a third party, the same inventory-leak problem ADR-010 ruled
+out for MAC vendors.
+
+**Consequences.**
+- Network owner from bundled published ranges instead: 12 of 28 live
+  connections identified, labelled "network owner only".
+- **Cost:** the product cannot answer "which sites have I visited". That is
+  the correct answer to give, and it is now a stated boundary rather than a
+  gap.
+
+---
+
 ## Summary
 
 | ADR | Decision |
@@ -462,3 +517,5 @@ be made to fabricate a network on command is a binary that can lie.
 | 015 | Mobile is a companion, not a port |
 | 016 | A tunnel is a route, not a connection type |
 | 017 | Fixtures are development-only, enforced at compile time |
+| 018 | Run Apple's `nettop`; never link the framework behind it |
+| 019 | No IP-to-domain mapping, at all |

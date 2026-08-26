@@ -37,6 +37,11 @@ not a description of current limitations.
   network cannot do it, and JRX will not pretend otherwise.
 - **Require root or administrator access.** Not at install, not at run time,
   not for any feature.
+- **Name the websites you visit.** JRX can see which of your programs are
+  talking and to whose network. Turning an address into a site name would need
+  it to watch your DNS lookups, which is refused above. Measured: reverse DNS
+  answered for none of 12 live endpoints, and would not be proof even if it
+  had.
 - **Send anything anywhere.** No accounts, no backend, no analytics, no crash
   reporting, no update ping.
 

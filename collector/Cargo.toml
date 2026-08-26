@@ -20,6 +20,8 @@ mdns-sd = { version = "0.21", default-features = false }
 [features]
 # Development only. A release build with this enabled fails to compile.
 fixtures = []
+# M5 phase 0 feasibility spike. Development only.
+activity-spike = []
 
 [lints]
 workspace = true
