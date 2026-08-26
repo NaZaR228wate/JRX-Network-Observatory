@@ -19,6 +19,7 @@ import hotspot from "../fixtures/hotspot.json";
 import isolated from "../fixtures/isolated_network.json";
 import permission from "../fixtures/permission_limited.json";
 import university from "../fixtures/university_wifi.json";
+import stress from "../fixtures/stress_500.json";
 import vpn from "../fixtures/vpn.json";
 
 const FIXTURES: Record<string, unknown> = {
@@ -29,6 +30,7 @@ const FIXTURES: Record<string, unknown> = {
   isolated_network: isolated,
   permission_limited: permission,
   hotspot,
+  stress_500: stress,
 };
 
 function Preview() {

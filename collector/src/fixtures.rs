@@ -51,6 +51,9 @@ pub enum Fixture {
     IsolatedNetwork,
     /// Wi-Fi connected, but macOS withholds the network name.
     PermissionLimited,
+    /// 500 devices. Not a network anyone has — a load case, for checking that
+    /// level 1 and level 2 stay bounded and nothing jitters.
+    Stress500,
 }
 
 impl Fixture {
@@ -68,11 +71,12 @@ impl Fixture {
             "vpn" => Some(Fixture::Vpn),
             "isolated_network" => Some(Fixture::IsolatedNetwork),
             "permission_limited" => Some(Fixture::PermissionLimited),
+            "stress_500" => Some(Fixture::Stress500),
             _ => None,
         }
     }
 
-    pub const ALL: [Fixture; 7] = [
+    pub const ALL: [Fixture; 8] = [
         Fixture::HomeWifi,
         Fixture::UniversityWifi,
         Fixture::Ethernet,
@@ -80,6 +84,7 @@ impl Fixture {
         Fixture::Vpn,
         Fixture::IsolatedNetwork,
         Fixture::PermissionLimited,
+        Fixture::Stress500,
     ];
 
     pub fn name(self) -> &'static str {
@@ -91,6 +96,7 @@ impl Fixture {
             Fixture::Vpn => "vpn",
             Fixture::IsolatedNetwork => "isolated_network",
             Fixture::PermissionLimited => "permission_limited",
+            Fixture::Stress500 => "stress_500",
         }
     }
 
@@ -153,6 +159,7 @@ impl Fixture {
             Fixture::Vpn => vpn(),
             Fixture::IsolatedNetwork => isolated_network(),
             Fixture::PermissionLimited => permission_limited(),
+            Fixture::Stress500 => stress_500(),
         }
     }
 }
@@ -483,6 +490,28 @@ fn isolated_network() -> Spec {
             source(DiscoveryMethod::Ssdp, 0, 0, 0),
         ],
     }
+}
+
+fn stress_500() -> Spec {
+    let mut spec = university_wifi();
+    const REGISTERED: [&str; 4] = ["48:45:20", "b0:4a:39", "1c:90:ff", "14:b5:cd"];
+    for i in 128..500 {
+        let address = format!("10.20.{}.{}", 8 + i / 200, i % 200 + 1);
+        let mac = if i % 4 == 0 {
+            format!(
+                "{}:{:02x}:{:02x}:{:02x}",
+                REGISTERED[(i / 4) % REGISTERED.len()],
+                i / 256,
+                i % 256,
+                (i * 3) % 256
+            )
+        } else {
+            format!("9e:cc:dd:{:02x}:{:02x}:02", i / 256, i % 256)
+        };
+        spec.observations.push(arp(&address, &mac));
+    }
+    spec.sources[0] = source(DiscoveryMethod::ArpCache, 505, 0, 0);
+    spec
 }
 
 fn permission_limited() -> Spec {

@@ -345,3 +345,53 @@ fn an_entirely_empty_result_still_produces_a_valid_map() {
     assert_eq!(view.page_count, 1);
     assert!(view.devices.is_empty());
 }
+
+// ---- M4.5: the router is drawn once, and the counts stay true ----
+
+/// The router is the centre node, so counting it again in the Infrastructure
+/// ring would draw it twice. Excluding it must not make the count a lie: the
+/// group has to report what is actually in it.
+#[test]
+fn the_infrastructure_count_excludes_the_centre_and_stays_truthful() {
+    let devices = network(20);
+    let overview = TopologyOverview::build(&devices);
+    let infra = overview.group(Category::Infrastructure).expect("group");
+    let page = GroupView::build(&devices, Category::Infrastructure, 0);
+
+    // Whatever the count says, the group page must contain exactly that many.
+    assert_eq!(infra.count, page.total);
+    assert!(page.devices.iter().all(|n| !n.is_gateway));
+
+    // ...and the router is still present in the device list and on the map.
+    let routers = devices.iter().filter(|d| d.is_gateway).count();
+    assert_eq!(routers, 1);
+    assert!(overview.center.is_some());
+
+    // Every infrastructure device is accounted for exactly once: either as
+    // the centre, or in the ring.
+    let all_infrastructure = devices
+        .iter()
+        .filter(|d| d.category() == Category::Infrastructure)
+        .count();
+    assert_eq!(all_infrastructure, infra.count + routers);
+}
+
+/// Every device in the list appears exactly once across the whole level-1
+/// picture, so no device is silently dropped or double-counted.
+#[test]
+fn every_device_is_accounted_for_exactly_once_across_the_overview() {
+    for size in [10usize, 150] {
+        let devices = network(size);
+        let overview = TopologyOverview::build(&devices);
+
+        let in_rings: usize = overview.groups.iter().map(|g| g.count).sum();
+        let centre = usize::from(overview.center.is_some());
+
+        assert_eq!(
+            in_rings + centre,
+            devices.len(),
+            "at {size} devices: {in_rings} in rings + {centre} centre != {}",
+            devices.len()
+        );
+    }
+}
