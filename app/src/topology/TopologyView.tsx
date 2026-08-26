@@ -6,6 +6,7 @@ import type {
   TopologyNode,
   TopologyOverview,
 } from "../types";
+import { FILTER_CHOICES } from "../types";
 import { categoryGlyph, categoryTone } from "./visual";
 import { nodeRadius, placeGroups, placeMembers, placeSelf } from "./layout";
 
@@ -24,6 +25,8 @@ interface Props {
   onCloseGroup: () => void;
   onSelectDevice: (node: TopologyNode) => void;
   onPage: (page: number) => void;
+  filterKey?: string;
+  onFilter?: (key: string) => void;
 }
 
 export function TopologyView(props: Props) {
@@ -57,6 +60,8 @@ export function TopologyView(props: Props) {
       {props.openCategory && props.group && (
         <GroupChrome
           group={props.group}
+          filterKey={props.filterKey ?? "all"}
+          onFilter={props.onFilter}
           onClose={props.onCloseGroup}
           onPage={props.onPage}
         />
@@ -222,18 +227,37 @@ function GroupLevel({ group, onSelectDevice, highlighted, searching }: Props & {
 
 function GroupChrome({
   group,
+  filterKey,
+  onFilter,
   onClose,
   onPage,
 }: {
   group: GroupView;
+  filterKey: string;
+  onFilter?: (key: string) => void;
   onClose: () => void;
   onPage: (page: number) => void;
 }) {
   return (
     <div className="group-chrome">
-      <button className="back" onClick={onClose}>
-        ← Whole network
-      </button>
+      <div className="chrome-top">
+        <button className="back" onClick={onClose}>
+          ← Whole network
+        </button>
+        {onFilter && (
+          <div className="filters" role="group" aria-label="Narrow by observed facts">
+            {FILTER_CHOICES.map((choice) => (
+              <button
+                key={choice.key}
+                className={choice.key === filterKey ? "on" : undefined}
+                onClick={() => onFilter(choice.key)}
+              >
+                {choice.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {group.facts.length > 0 && (
         <div className="group-facts">

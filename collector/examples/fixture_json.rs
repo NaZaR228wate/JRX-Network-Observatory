@@ -19,19 +19,64 @@ fn main() {
     // Every group page, produced by the real GroupView. The preview looks these
     // up rather than re-deriving them in TypeScript, so what is reviewed
     // visually is what production computes.
+    use jrx_core::topology::{GroupFilter, GroupView};
+
+    let variants: [(&str, GroupFilter); 6] = [
+        ("all", GroupFilter::default()),
+        (
+            "named",
+            GroupFilter {
+                named: true,
+                ..GroupFilter::default()
+            },
+        ),
+        (
+            "vendor_known",
+            GroupFilter {
+                vendor_known: true,
+                ..GroupFilter::default()
+            },
+        ),
+        (
+            "randomised",
+            GroupFilter {
+                randomised: true,
+                ..GroupFilter::default()
+            },
+        ),
+        (
+            "mdns",
+            GroupFilter {
+                source: Some(jrx_core::device::DiscoveryMethod::Mdns),
+                ..GroupFilter::default()
+            },
+        ),
+        (
+            "arp_cache",
+            GroupFilter {
+                source: Some(jrx_core::device::DiscoveryMethod::ArpCache),
+                ..GroupFilter::default()
+            },
+        ),
+    ];
+
     let mut group_pages = serde_json::Map::new();
     for category in jrx_core::device::Category::ORDER {
-        let first = jrx_core::topology::GroupView::build(&report.devices, category, 0);
-        let pages: Vec<_> = (0..first.page_count)
-            .map(|page| jrx_core::topology::GroupView::build(&report.devices, category, page))
-            .collect();
+        let mut by_filter = serde_json::Map::new();
+        for (key, filter) in variants {
+            let first = GroupView::filtered(&report.devices, category, 0, filter);
+            let pages: Vec<_> = (0..first.page_count)
+                .map(|page| GroupView::filtered(&report.devices, category, page, filter))
+                .collect();
+            by_filter.insert(key.to_string(), serde_json::to_value(pages).unwrap());
+        }
         group_pages.insert(
             serde_json::to_value(category)
                 .unwrap()
                 .as_str()
                 .unwrap()
                 .to_string(),
-            serde_json::to_value(pages).unwrap(),
+            serde_json::Value::Object(by_filter),
         );
     }
 

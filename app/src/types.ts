@@ -277,3 +277,23 @@ export type DiscoveryStage =
   | { stage: "started" }
   | { stage: "source_finished"; source: SourceQuality }
   | { stage: "partial"; overview: TopologyOverview; devices: Device[] };
+
+/** Narrowing a group by things devices actually revealed.
+ *
+ *  Every option is an observed fact. There is deliberately no filter for
+ *  anything JRX inferred — "probably a phone" is not a fact. */
+export interface GroupFilter {
+  named?: boolean;
+  vendor_known?: boolean;
+  randomised?: boolean;
+  source?: DiscoverySource | null;
+}
+
+/** The filter choices offered in the group view, in order. */
+export const FILTER_CHOICES: { key: string; label: string; filter: GroupFilter }[] = [
+  { key: "all", label: "All", filter: {} },
+  { key: "named", label: "Announced a name", filter: { named: true } },
+  { key: "vendor_known", label: "Manufacturer known", filter: { vendor_known: true } },
+  { key: "randomised", label: "Private address", filter: { randomised: true } },
+  { key: "mdns", label: "Announced itself", filter: { source: "mdns" } },
+];

@@ -14,6 +14,7 @@ import type {
   SourceQuality,
   TopologyOverview,
 } from "./types";
+import { FILTER_CHOICES } from "./types";
 import "./styles.css";
 
 /** Live wiring. All rendering lives in Screen, which the development preview
@@ -73,8 +74,12 @@ export function App() {
     sources,
     failure,
     // Derived by the host from the report it already holds: no network work.
-    getGroup: (category: Category, page: number) =>
-      invoke<GroupView>("group_view", { category, page }),
+    getGroup: (category: Category, page: number, filterKey: string) =>
+      invoke<GroupView>("group_view", {
+        category,
+        page,
+        filter: FILTER_CHOICES.find((c) => c.key === filterKey)?.filter ?? {},
+      }),
   };
 
   return <Screen live={live} />;

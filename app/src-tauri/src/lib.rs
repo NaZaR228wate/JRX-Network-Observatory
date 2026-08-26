@@ -156,13 +156,15 @@ fn group_view(
     state: tauri::State<'_, LastDiscovery>,
     category: jrx_core::device::Category,
     page: usize,
+    filter: Option<jrx_core::topology::GroupFilter>,
 ) -> Result<jrx_core::topology::GroupView, String> {
     let held = state.0.lock().map_err(|_| "discovery state poisoned")?;
     let report = held.as_ref().ok_or("no discovery has completed yet")?;
-    Ok(jrx_core::topology::GroupView::build(
+    Ok(jrx_core::topology::GroupView::filtered(
         &report.devices,
         category,
         page,
+        filter.unwrap_or_default(),
     ))
 }
 

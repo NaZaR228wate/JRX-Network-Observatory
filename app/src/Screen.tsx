@@ -29,7 +29,7 @@ export interface ScreenData {
   sources: SourceQuality[];
   failure: string | null;
   /** Resolves a group page. Live: a host command. Preview: a lookup. */
-  getGroup: (category: Category, page: number) => Promise<GroupView>;
+  getGroup: (category: Category, page: number, filterKey: string) => Promise<GroupView>;
 }
 
 /** Shape of a dumped fixture payload. */
@@ -38,7 +38,7 @@ export interface PreviewData {
   identity: NetworkIdentityReport;
   capabilities: CapabilityMatrix;
   report: DiscoveryReport;
-  group_pages: Record<string, GroupView[]>;
+  group_pages: Record<string, Record<string, GroupView[]>>;
 }
 
 export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }) {
@@ -47,13 +47,15 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
 
   const [openCategory, setOpenCategory] = useState<Category | null>(null);
   const [group, setGroup] = useState<GroupView | null>(null);
+  const [filterKey, setFilterKey] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
   const [query, setQuery] = useState("");
 
   const openGroup = useCallback(
-    async (category: Category, page = 0) => {
+    async (category: Category, page = 0, key = "all") => {
       setOpenCategory(category);
-      setGroup(await state.getGroup(category, page));
+      setFilterKey(key);
+      setGroup(await state.getGroup(category, page, key));
     },
     [state],
   );
@@ -132,9 +134,12 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
               onCloseGroup={() => {
                 setOpenCategory(null);
                 setGroup(null);
+                setFilterKey("all");
               }}
               onSelectDevice={onSelect}
-              onPage={(page) => openCategory && void openGroup(openCategory, page)}
+              filterKey={filterKey}
+              onFilter={(key) => openCategory && void openGroup(openCategory, 0, key)}
+              onPage={(page) => openCategory && void openGroup(openCategory, page, filterKey)}
             />
           ) : (
             <div className="topo-placeholder" />
@@ -222,9 +227,9 @@ function fromPreview(data: PreviewData): ScreenData {
     report: data.report,
     sources: data.report.quality.sources,
     failure: null,
-    getGroup: async (category, page) => {
-      const pages = data.group_pages[category] ?? [];
-      return pages[Math.min(page, pages.length - 1)] ?? pages[0]!;
+    getGroup: async (category, page, filterKey) => {
+      const pages = data.group_pages[category]?.[filterKey] ?? [];
+      return pages[Math.min(page, Math.max(0, pages.length - 1))] ?? pages[0]!;
     },
   };
 }

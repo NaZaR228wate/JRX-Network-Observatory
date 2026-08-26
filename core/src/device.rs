@@ -164,7 +164,7 @@ mod mac_tests {
 /// How a fact about a device was learned. Shown to the user verbatim, because
 /// "we saw it announce itself" and "we asked it directly" are different
 /// things and the difference matters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveryMethod {
     /// Read from the neighbour cache the OS had already built. Nothing sent.

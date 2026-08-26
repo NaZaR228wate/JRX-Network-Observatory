@@ -8,6 +8,8 @@
 
 use serde::Serialize;
 
+use serde::Deserialize;
+
 use crate::device::{
     Category, Confidence, Device, DeviceFamily, DiscoveryMethod, Evidence, Isolation,
     assess_isolation,
@@ -239,6 +241,45 @@ fn unknown_facts(members: &[&Device]) -> Vec<GroupFact> {
     .collect()
 }
 
+/// Narrowing a group by things devices actually revealed.
+///
+/// Every option here is an observed fact. There is deliberately no filter for
+/// anything JRX inferred — "probably a phone" is not a fact, and offering it
+/// as one would undo the discipline the rest of the model exists to keep
+/// (TECH_DECISIONS.md ADR-008).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GroupFilter {
+    /// The device announced a name.
+    pub named: bool,
+    /// A manufacturer was resolved from a stable hardware address.
+    pub vendor_known: bool,
+    /// The device is rotating its hardware address.
+    pub randomised: bool,
+    /// Seen by this source.
+    pub source: Option<DiscoveryMethod>,
+}
+
+impl GroupFilter {
+    fn keeps(self, device: &Device) -> bool {
+        if self.named && device.facts.hostname.is_none() {
+            return false;
+        }
+        if self.vendor_known && device.facts.vendor.is_none() {
+            return false;
+        }
+        if self.randomised && !device.facts.mac_randomised {
+            return false;
+        }
+        if let Some(source) = self.source
+            && !device.facts.sources.contains(&source)
+        {
+            return false;
+        }
+        true
+    }
+}
+
 /// Level 2: the members of one category.
 ///
 /// Paginated rather than virtualised, because a page boundary is something a
@@ -269,10 +310,20 @@ impl GroupView {
     pub const PAGE_SIZE: usize = 40;
 
     pub fn build(devices: &[Device], category: Category, page: usize) -> GroupView {
+        Self::filtered(devices, category, page, GroupFilter::default())
+    }
+
+    /// One category, narrowed by observed facts.
+    pub fn filtered(
+        devices: &[Device],
+        category: Category,
+        page: usize,
+        filter: GroupFilter,
+    ) -> GroupView {
         // The centre is drawn in the middle of the map, never inside a group.
         let mut members: Vec<&Device> = devices
             .iter()
-            .filter(|d| !d.is_gateway && d.category() == category)
+            .filter(|d| !d.is_gateway && d.category() == category && filter.keeps(d))
             .collect();
 
         // Deterministic, and most informative first: a page of anonymous
@@ -930,5 +981,171 @@ mod group_view_tests {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod group_filter_tests {
+    use super::overview_tests::{any_vendor, network, none};
+    use super::*;
+    use crate::device::{Category, DiscoveryMethod};
+
+    #[test]
+    fn no_filter_shows_everything() {
+        let devices = network(30, any_vendor);
+        let all = GroupView::build(&devices, Category::Unknown, 0);
+        let unfiltered =
+            GroupView::filtered(&devices, Category::Unknown, 0, GroupFilter::default());
+        assert_eq!(all.total, unfiltered.total);
+    }
+
+    /// Every filter is a fact the device revealed, never something inferred
+    /// about it.
+    #[test]
+    fn filtering_to_named_devices_keeps_only_devices_that_announced_a_name() {
+        let devices = network(30, any_vendor);
+        let view = GroupView::filtered(
+            &devices,
+            Category::Unknown,
+            0,
+            GroupFilter {
+                named: true,
+                ..GroupFilter::default()
+            },
+        );
+        assert!(view.devices.iter().all(|n| n.display_name != n.device_id));
+    }
+
+    #[test]
+    fn filtering_to_randomised_addresses_keeps_only_those() {
+        let devices = network(40, any_vendor);
+        let view = GroupView::filtered(
+            &devices,
+            Category::Unknown,
+            0,
+            GroupFilter {
+                randomised: true,
+                ..GroupFilter::default()
+            },
+        );
+        assert!(view.total > 0);
+        assert!(view.devices.iter().all(|n| n.mac_randomised));
+    }
+
+    /// A rotating address never resolves a manufacturer, so the two filters
+    /// must not overlap.
+    #[test]
+    fn the_manufacturer_filter_excludes_randomised_addresses() {
+        let devices = network(40, any_vendor);
+        let view = GroupView::filtered(
+            &devices,
+            Category::Unknown,
+            0,
+            GroupFilter {
+                vendor_known: true,
+                ..GroupFilter::default()
+            },
+        );
+        assert!(view.total > 0);
+        assert!(
+            view.devices
+                .iter()
+                .all(|n| n.vendor.is_some() && !n.mac_randomised)
+        );
+    }
+
+    #[test]
+    fn filtering_by_discovery_source_keeps_only_devices_that_source_saw() {
+        let devices = network(20, none);
+        let view = GroupView::filtered(
+            &devices,
+            Category::Unknown,
+            0,
+            GroupFilter {
+                source: Some(DiscoveryMethod::Mdns),
+                ..GroupFilter::default()
+            },
+        );
+        assert!(
+            view.devices
+                .iter()
+                .all(|n| n.sources.contains(&DiscoveryMethod::Mdns))
+        );
+    }
+
+    /// Filters combine, and the count reflects the filtered set rather than
+    /// the whole group — otherwise the pager would promise pages that do not
+    /// exist.
+    #[test]
+    fn a_filtered_view_paginates_over_the_filtered_set() {
+        let devices = network(200, any_vendor);
+        let filtered = GroupView::filtered(
+            &devices,
+            Category::Unknown,
+            0,
+            GroupFilter {
+                randomised: true,
+                ..GroupFilter::default()
+            },
+        );
+        let all = GroupView::build(&devices, Category::Unknown, 0);
+
+        assert!(filtered.total < all.total);
+        assert_eq!(
+            filtered.page_count,
+            filtered.total.div_ceil(GroupView::PAGE_SIZE).max(1)
+        );
+    }
+
+    /// The facts must describe what is on screen, not the whole group, or the
+    /// numbers contradict the list beneath them.
+    #[test]
+    fn a_filtered_view_reports_facts_about_the_filtered_set() {
+        let devices = network(60, any_vendor);
+        let view = GroupView::filtered(
+            &devices,
+            Category::Unknown,
+            0,
+            GroupFilter {
+                randomised: true,
+                ..GroupFilter::default()
+            },
+        );
+        let rotating = view
+            .facts
+            .iter()
+            .find(|f| f.description.contains("rotating"))
+            .expect("the rotating count is present");
+        assert_eq!(rotating.count, view.total);
+    }
+
+    #[test]
+    fn a_filter_matching_nothing_is_empty_but_valid() {
+        let devices = network(10, none);
+        let view = GroupView::filtered(
+            &devices,
+            Category::Unknown,
+            0,
+            GroupFilter {
+                vendor_known: true,
+                ..GroupFilter::default()
+            },
+        );
+        assert_eq!(view.total, 0);
+        assert_eq!(view.page_count, 1);
+        assert!(view.devices.is_empty());
+    }
+
+    #[test]
+    fn filtering_is_deterministic() {
+        let devices = network(150, any_vendor);
+        let filter = GroupFilter {
+            randomised: true,
+            ..GroupFilter::default()
+        };
+        assert_eq!(
+            GroupView::filtered(&devices, Category::Unknown, 1, filter),
+            GroupView::filtered(&devices, Category::Unknown, 1, filter)
+        );
     }
 }

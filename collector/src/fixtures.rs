@@ -331,14 +331,25 @@ fn university_wifi() -> Spec {
         announced("10.20.6.2", "switch9db1a0", &["_http._tcp"]),
         announced("10.20.6.77", "LAPTOP-FSPI6LK4", &["_spotify-connect._tcp"]),
     ];
-    // A managed network is mostly phones with private addresses.
+    // A managed network is mostly phones rotating their addresses, with a
+    // minority of devices whose manufacturer resolves but whose type does not.
+    // Real registered prefixes, so the OUI lookup behaves as it does live.
+    const REGISTERED: [&str; 4] = ["48:45:20", "b0:4a:39", "1c:90:ff", "14:b5:cd"];
     for i in 0..128 {
-        let randomised = i % 3 != 0;
-        let first = if randomised { 0x9e } else { 0x3c };
-        observations.push(arp(
-            &format!("10.20.{}.{}", 8 + i / 200, i % 200 + 1),
-            &format!("{first:02x}:aa:bb:{:02x}:{:02x}:01", i / 256, i % 256),
-        ));
+        let address = format!("10.20.{}.{}", 8 + i / 200, i % 200 + 1);
+        let mac = if i % 3 == 0 {
+            format!(
+                "{}:{:02x}:{:02x}:{:02x}",
+                REGISTERED[(i / 3) % REGISTERED.len()],
+                i / 256,
+                i % 256,
+                (i * 7) % 256
+            )
+        } else {
+            // The locally-administered bit set: a rotating address.
+            format!("9e:aa:bb:{:02x}:{:02x}:01", i / 256, i % 256)
+        };
+        observations.push(arp(&address, &mac));
     }
     Spec {
         routes: vec![
