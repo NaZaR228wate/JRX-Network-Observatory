@@ -36,7 +36,7 @@ export function categoryLabel(category: Category): string {
     case "infrastructure":
       return "Infrastructure";
     case "unknown":
-      return "Unknown";
+      return "Unidentified";
   }
 }
 

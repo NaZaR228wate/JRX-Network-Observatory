@@ -252,7 +252,9 @@ impl Category {
             Category::Phones => "Phones",
             Category::SmartHome => "Smart home",
             Category::Infrastructure => "Infrastructure",
-            Category::Unknown => "Unknown",
+            // Not "Unknown": a device JRX chose not to guess at is a valid
+            // result, and the word should not read like a missing value.
+            Category::Unknown => "Unidentified",
         }
     }
 }

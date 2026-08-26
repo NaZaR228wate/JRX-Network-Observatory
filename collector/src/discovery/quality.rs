@@ -100,11 +100,14 @@ pub fn assess(sources: &[SourceQuality], devices_found: usize) -> DiscoveryQuali
     };
 
     let explanation = match verdict {
-        DiscoveryVerdict::Healthy => {
-            format!("{devices_found} devices found. Every discovery source worked.")
-        }
+        DiscoveryVerdict::Healthy => format!(
+            "{devices_found} other {} observed. Every discovery source worked.",
+            if devices_found == 1 { "device" } else { "devices" }
+        ),
         DiscoveryVerdict::Degraded => format!(
-            "{devices_found} devices found, but the picture may be incomplete: {}",
+            "{devices_found} other {} observed, but the picture may be \
+             incomplete: {}",
+            if devices_found == 1 { "device" } else { "devices" },
             failures.join("; ")
         ),
         DiscoveryVerdict::DiscoveryBlocked => format!(

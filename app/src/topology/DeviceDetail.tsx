@@ -29,23 +29,38 @@ export function DeviceDetail({
   onClose: () => void;
 }) {
   const { facts, inference } = device;
+  const unidentified = inference.category === "unknown";
 
   return (
     <aside className="detail" aria-label="Device details">
       <div className="detail-head">
         <div>
           <h3>{displayName(device)}</h3>
-          <p className="note">
-            {categoryLabel(inference.category)} · {confidenceLabel(inference.confidence)}
-            {inference.family && ` · ${inference.family}`}
-          </p>
+          {unidentified ? (
+            // Not "Unknown / 0%": choosing not to guess is a result, not a
+            // failure, and the wording must not read like one.
+            <p className="note">Unidentified device</p>
+          ) : (
+            <p className="note">
+              {categoryLabel(inference.category)} · {confidenceLabel(inference.confidence)}
+              {inference.family && ` · ${inference.family}`}
+            </p>
+          )}
         </div>
         <button className="back" onClick={onClose} aria-label="Close details">
           ✕
         </button>
       </div>
 
-      <Section title="What we know" hint="Observed directly. No interpretation.">
+      {unidentified && (
+        <p className="unidentified-note">
+          JRX has observed this device on the network but does not have enough
+          evidence to say what kind of device it is. That is a result, not an
+          error — guessing would be worse.
+        </p>
+      )}
+
+      <Section title="What JRX knows" hint="Observed directly. No interpretation.">
         <Row label="Address">
           <span className="mono">{facts.addresses.join(", ")}</span>
         </Row>
@@ -97,15 +112,17 @@ export function DeviceDetail({
         </Row>
       </Section>
 
-      <Section title="What we conclude" hint="Derived from the evidence below.">
-        <Row label="Category">{categoryLabel(inference.category)}</Row>
-        <Row label="Kind">
-          {inference.family ?? (
-            <span className="state">Not determined — the evidence does not say</span>
-          )}
-        </Row>
-        <Row label="Confidence">{confidenceLabel(inference.confidence)}</Row>
-      </Section>
+      {!unidentified && (
+        <Section title="What JRX concludes" hint="Derived from the evidence below.">
+          <Row label="Category">{categoryLabel(inference.category)}</Row>
+          <Row label="Kind">
+            {inference.family ?? (
+              <span className="state">Not determined — the evidence does not say</span>
+            )}
+          </Row>
+          <Row label="Confidence">{confidenceLabel(inference.confidence)}</Row>
+        </Section>
+      )}
 
       <Section title="Why" hint="The exact observations behind the conclusion.">
         {inference.supporting.length > 0 ? (
@@ -136,7 +153,7 @@ export function DeviceDetail({
         )}
       </Section>
 
-      <Section title="What we do not know" hint="Stated plainly rather than guessed.">
+      <Section title="What JRX does not know" hint="Stated plainly rather than guessed.">
         <ul className="plain">
           <li>The exact model. Nothing on the network reveals it.</li>
           <li>Who owns or uses it. JRX has no such information and will not infer it.</li>

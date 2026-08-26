@@ -9,10 +9,10 @@ import type {
 import { categoryGlyph, categoryTone } from "./visual";
 import { nodeRadius, placeGroups, placeMembers, placeSelf } from "./layout";
 
-const WIDTH = 720;
-const HEIGHT = 560;
+const WIDTH = 760;
+const HEIGHT = 470;
 const CENTER = { x: WIDTH / 2, y: HEIGHT / 2 };
-const RING = 205;
+const RING = 176;
 
 interface Props {
   overview: TopologyOverview;
@@ -174,7 +174,7 @@ const LABEL_BUDGET = 12;
 
 function GroupLevel({ group, onSelectDevice, highlighted, searching }: Props & { group: GroupView }) {
   const points = useMemo(
-    () => placeMembers(CENTER, group.devices.length, 128, 74),
+    () => placeMembers(CENTER, group.devices.length, 116, 66),
     [group.devices.length],
   );
   // Naming a handful of nodes is informative; naming a hundred is noise.

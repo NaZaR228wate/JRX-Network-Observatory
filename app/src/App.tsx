@@ -1,155 +1,81 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { connectionLabel, networkLine } from "./labels";
-import { Topology } from "./topology/Topology";
-import { VisibilityPanel } from "./VisibilityPanel";
-import type { CapabilityMatrix, NetworkIdentityReport } from "./types";
+import { listen } from "@tauri-apps/api/event";
+import { Screen } from "./Screen";
+import type { ScreenData } from "./Screen";
+import type {
+  CapabilityMatrix,
+  Category,
+  Device,
+  DiscoveryReport,
+  DiscoveryStage,
+  GroupView,
+  NetworkIdentityReport,
+  SourceQuality,
+  TopologyOverview,
+} from "./types";
 import "./styles.css";
 
-// M1: Network Identity only. Device discovery is M3, the topology is M4.
+/** Live wiring. All rendering lives in Screen, which the development preview
+ *  drives with fixture data — so what is reviewed visually is what ships. */
 export function App() {
-  const [report, setReport] = useState<NetworkIdentityReport | null>(null);
-  const [caps, setCaps] = useState<CapabilityMatrix | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [identity, setIdentity] = useState<NetworkIdentityReport | null>(null);
+  const [capabilities, setCapabilities] = useState<CapabilityMatrix | null>(null);
+  const [overview, setOverview] = useState<TopologyOverview | null>(null);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [report, setReport] = useState<DiscoveryReport | null>(null);
+  const [sources, setSources] = useState<SourceQuality[]>([]);
+  const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
+    // The identity resolves in a few hundred milliseconds, so the first thing
+    // on screen is the answer to "what am I connected to?".
     invoke<NetworkIdentityReport>("get_network_identity")
-      .then(setReport)
-      .catch((e: unknown) => setError(String(e)));
-    invoke<CapabilityMatrix>("get_capabilities")
-      .then(setCaps)
-      .catch(() => undefined);
+      .then(setIdentity)
+      .catch((e: unknown) => setFailure(String(e)));
+    invoke<CapabilityMatrix>("get_capabilities").then(setCapabilities).catch(() => undefined);
+
+    const unlisteners = [
+      listen<DiscoveryStage>("discovery://stage", (event) => {
+        const stage = event.payload;
+        if (stage.stage === "source_finished") {
+          setSources((prev) =>
+            prev.some((s) => s.method === stage.source.method)
+              ? prev
+              : [...prev, stage.source],
+          );
+        } else if (stage.stage === "partial") {
+          setOverview(stage.overview);
+          setDevices(stage.devices);
+        }
+      }),
+      listen<DiscoveryReport>("discovery://complete", (event) => {
+        setReport(event.payload);
+        setOverview(event.payload.overview);
+        setDevices(event.payload.devices);
+        setSources(event.payload.quality.sources);
+      }),
+      listen<string>("discovery://failed", (event) => setFailure(event.payload)),
+    ];
+
+    void invoke("start_discovery");
+    return () => {
+      void Promise.all(unlisteners).then((fns) => fns.forEach((fn) => fn()));
+    };
   }, []);
 
-  if (error) {
-    return (
-      <div className="shell">
-        <Brand />
-        <p className="err">Could not read this network: {error}</p>
-      </div>
-    );
-  }
+  const live: ScreenData = {
+    identity,
+    capabilities,
+    overview,
+    devices,
+    report,
+    sources,
+    failure,
+    // Derived by the host from the report it already holds: no network work.
+    getGroup: (category: Category, page: number) =>
+      invoke<GroupView>("group_view", { category, page }),
+  };
 
-  if (!report) {
-    return (
-      <div className="shell">
-        <Brand />
-        <p className="state">Observing…</p>
-      </div>
-    );
-  }
-
-  const id = report.identity;
-  const net = networkLine(id);
-  const observed = caps?.rows.filter((r) => r.state.state === "observed").length ?? 0;
-  const available = caps?.rows.filter((r) => r.state.state === "available").length ?? 0;
-  const refused = caps?.refused.length ?? 0;
-  const blocked =
-    (caps?.rows.filter((r) => r.state.state === "not_possible").length ?? 0) +
-    (caps?.limitations.length ?? 0);
-
-  return (
-    <div className="shell">
-      <Brand />
-
-      <h2 className="headline">{connectionLabel(id.connection)}</h2>
-      <p className="sub">
-        {id.interface_label ? `${id.interface_label} · ` : ""}
-        <span className="mono">{id.interface || "no active interface"}</span>
-        {" · observed in "}
-        {report.observed_in_ms} ms
-      </p>
-
-      <dl className="card">
-        <div className="row">
-          <dt>You are connected via</dt>
-          <dd>
-            {connectionLabel(id.connection)}
-            {id.tunnel && <> <span className="pill warn">Traffic leaves via a tunnel</span></>}
-            {id.connection === "unknown" && (
-              <div className="note">
-                No default route was found, so JRX will not guess how you are
-                connected.
-              </div>
-            )}
-          </dd>
-        </div>
-
-        <div className="row">
-          <dt>Network</dt>
-          <dd>
-            <span className={net.tone === "off" ? "state" : undefined}>{net.value}</span>
-            {net.tone && net.tone !== "off" && (
-              <> <span className={`pill ${net.tone}`}>{net.tone === "ok" ? "live" : "limited"}</span></>
-            )}
-            {net.note && <div className="note">{net.note}</div>}
-          </dd>
-        </div>
-
-        <div className="row">
-          <dt>Router</dt>
-          <dd>
-            <span className="mono">{id.gateway ?? "unknown"}</span>
-            {id.subnet && (
-              <div className="note">
-                Your subnet is{" "}
-                <span className="mono">
-                  {id.subnet.network}/{id.subnet.prefix_len}
-                </span>
-              </div>
-            )}
-          </dd>
-        </div>
-
-        <div className="row">
-          <dt>Internet path</dt>
-          <dd>
-            <div className="path">
-              <span className="hop self mono">{id.local_ip ?? "this device"}</span>
-              <span className="arrow">→</span>
-              <span className="hop mono">{id.gateway ?? "?"}</span>
-              <span className="arrow">→</span>
-              <span className="hop">internet</span>
-            </div>
-            <div className="note">
-              {id.dns_servers.length > 0 ? (
-                <>Names are resolved by <span className="mono">{id.dns_servers.join(", ")}</span></>
-              ) : (
-                "No DNS resolvers were reported."
-              )}
-            </div>
-          </dd>
-        </div>
-
-        <div className="row">
-          <dt>Visibility status</dt>
-          <dd>
-            <div className="vis">
-              <span className="pill ok">{observed} observed</span>
-              <span className="pill warn">{available} need permission</span>
-              <span className="pill off">{blocked} not possible</span>
-              <span className="pill">{refused} refused by design</span>
-            </div>
-            <div className="note">
-              JRX runs without administrator access and collects no packet
-              contents.
-            </div>
-          </dd>
-        </div>
-      </dl>
-
-      <Topology />
-
-      {caps && <VisibilityPanel matrix={caps} />}
-    </div>
-  );
-}
-
-function Brand() {
-  return (
-    <div className="brand">
-      <h1>JRX</h1>
-      <span className="tag">Network Observatory</span>
-    </div>
-  );
+  return <Screen live={live} />;
 }
