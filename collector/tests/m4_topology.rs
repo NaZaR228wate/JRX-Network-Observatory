@@ -263,9 +263,25 @@ fn an_isolated_network_is_recognised_and_explained() {
     t.mark_self(ip(1));
     let devices = t.finish(oui::vendor_of);
 
-    assert_eq!(assess_isolation(&devices), Isolation::LikelyIsolated);
     assert_eq!(
-        DiscoverySummary::of(&devices).isolation,
+        assess_isolation(
+            &devices,
+            Some(jrx_core::network::Subnet {
+                network: "10.0.0.0".parse().unwrap(),
+                prefix_len: 24
+            })
+        ),
+        Isolation::LikelyIsolated
+    );
+    assert_eq!(
+        DiscoverySummary::of(
+            &devices,
+            Some(jrx_core::network::Subnet {
+                network: "10.0.0.0".parse().unwrap(),
+                prefix_len: 24
+            })
+        )
+        .isolation,
         Isolation::LikelyIsolated
     );
 

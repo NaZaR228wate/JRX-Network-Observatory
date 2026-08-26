@@ -115,6 +115,7 @@ impl Fixture {
 
     /// A full discovery result, produced by the real pipeline.
     pub fn report(self) -> DiscoveryReport {
+        let subnet = self.identity().subnet;
         let spec = self.spec();
         let mut table = DeviceTable::new();
         for observation in spec.observations {
@@ -136,7 +137,7 @@ impl Fixture {
         DiscoveryReport {
             overview: TopologyOverview::build(&devices),
             topology: Topology::build(&devices),
-            summary: DiscoverySummary::of(&devices),
+            summary: DiscoverySummary::of(&devices, subnet),
             quality: assess(&spec.sources, others),
             took_ms: 3120,
             devices,

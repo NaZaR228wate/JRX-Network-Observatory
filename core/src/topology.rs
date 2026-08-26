@@ -340,7 +340,7 @@ pub struct DiscoverySummary {
 }
 
 impl DiscoverySummary {
-    pub fn of(devices: &[Device]) -> DiscoverySummary {
+    pub fn of(devices: &[Device], subnet: Option<crate::network::Subnet>) -> DiscoverySummary {
         DiscoverySummary {
             total: devices.len(),
             unidentified: devices
@@ -356,7 +356,7 @@ impl DiscoverySummary {
                     )
                 })
                 .collect(),
-            isolation: assess_isolation(devices),
+            isolation: assess_isolation(devices, subnet),
         }
     }
 }
@@ -536,7 +536,13 @@ mod tests {
     #[test]
     fn summary_reports_unidentified_devices_plainly() {
         let devices = home_network();
-        let summary = DiscoverySummary::of(&devices);
+        let summary = DiscoverySummary::of(
+            &devices,
+            Some(crate::network::Subnet {
+                network: "192.168.1.0".parse().unwrap(),
+                prefix_len: 24,
+            }),
+        );
 
         assert_eq!(summary.total, 4);
         assert_eq!(summary.unidentified, 1);

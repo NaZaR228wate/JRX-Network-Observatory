@@ -51,14 +51,24 @@ export function networkLine(id: NetworkIdentity): {
     };
   }
 
-  if (id.connection === "ethernet" || id.connection === "usb_tether") {
+  // A phone sharing its connection is not a network with a name, and the
+  // state of this machine's Wi-Fi radio has nothing to do with it.
+  if (id.connection === "usb_tether") {
+    return {
+      value: "Shared from a phone",
+      note: "Your phone is passing its own connection through to this computer. Networks like this are usually just the two of you.",
+      tone: "off",
+    };
+  }
+
+  if (id.connection === "ethernet") {
     const note =
       w.status === "radio_off"
-        ? "Wi-Fi hardware is present but switched off, so there is no wireless network to name."
+        ? "A cable does not carry a network name. Wi-Fi is switched off on this machine."
         : w.status === "no_hardware"
-          ? "This machine has no Wi-Fi hardware."
-          : "Wi-Fi is on but not joined to a network.";
-    return { value: "Wired network — no name to show", note, tone: "off" };
+          ? "A cable does not carry a network name, and this machine has no Wi-Fi."
+          : "A cable does not carry a network name.";
+    return { value: "Wired connection", note, tone: "off" };
   }
 
   if (w.status === "radio_off") {

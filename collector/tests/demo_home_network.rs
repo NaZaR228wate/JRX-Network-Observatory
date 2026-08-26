@@ -243,7 +243,13 @@ fn the_topology_places_the_router_at_the_centre_and_highlights_this_mac() {
 #[test]
 fn the_summary_counts_the_unidentified_device_plainly() {
     let devices = home_network();
-    let summary = DiscoverySummary::of(&devices);
+    let summary = DiscoverySummary::of(
+        &devices,
+        Some(jrx_core::network::Subnet {
+            network: "192.168.1.0".parse().unwrap(),
+            prefix_len: 24,
+        }),
+    );
 
     assert_eq!(summary.total, 6);
     assert_eq!(summary.unidentified, 1);

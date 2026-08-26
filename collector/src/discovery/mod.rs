@@ -230,7 +230,7 @@ pub fn observe_with_progress(
     let devices = table.finish(oui::vendor_of);
     let overview = TopologyOverview::build(&devices);
     let topology = Topology::build(&devices);
-    let summary = DiscoverySummary::of(&devices);
+    let summary = DiscoverySummary::of(&devices, identity.subnet);
 
     // Devices other than ourselves and the router: this machine appearing on
     // its own map is not evidence that discovery worked.

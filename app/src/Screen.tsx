@@ -145,7 +145,12 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
               <DeviceDetail device={selectedDevice} onClose={() => setSelected(null)} />
             ) : (
               <>
-                {report && <QualityBanner quality={report.quality} />}
+                {report && (
+                  <QualityBanner
+                    quality={report.quality}
+                    isolation={report.summary.isolation}
+                  />
+                )}
                 <DiscoveryProgress sources={state.sources} done={report !== null} />
               </>
             )}

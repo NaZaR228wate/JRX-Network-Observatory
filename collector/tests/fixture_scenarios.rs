@@ -134,7 +134,10 @@ fn a_phone_hotspot_is_named_as_one_and_has_almost_no_peers() {
         others, 0,
         "a hotspot has the phone and this Mac, nothing else"
     );
-    assert_eq!(report.summary.isolation, Isolation::LikelyIsolated);
+    // A hotspot hands out a handful of addresses, so having no peers is the
+    // normal shape of a hotspot. Calling that client isolation would be
+    // inventing a finding the evidence does not support.
+    assert_eq!(report.summary.isolation, Isolation::NoPeersObserved);
 }
 
 // ---- F: VPN ----
@@ -171,11 +174,19 @@ fn a_vpn_keeps_the_physical_connection_visible() {
 
 // ---- G: isolation ----
 
+/// Guest Wi-Fi on a /20 with only the router answering is the signature of a
+/// network keeping its clients apart — distinct from a hotspot, where an
+/// empty result is unremarkable.
 #[test]
-fn an_isolated_network_is_distinguished_from_an_empty_one() {
+fn an_isolated_network_is_distinguished_from_a_merely_small_one() {
     let report = Fixture::IsolatedNetwork.report();
 
     assert_eq!(report.summary.isolation, Isolation::LikelyIsolated);
+    assert_ne!(
+        Fixture::Hotspot.report().summary.isolation,
+        report.summary.isolation,
+        "a hotspot and an isolating network must not read the same"
+    );
     // Every source ran, so this is the network's doing, not ours.
     assert_eq!(
         report.quality.verdict,

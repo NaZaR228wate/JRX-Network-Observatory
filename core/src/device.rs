@@ -1231,23 +1231,40 @@ impl DeviceTable {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Isolation {
-    /// Nothing but ourselves and the router was found. Guest and corporate
-    /// Wi-Fi commonly enforce this. Stated as "likely" because it is an
-    /// inference from absence, not something the network told us.
+    /// Only the router answered, on a network with room for many hosts. Guest
+    /// and corporate Wi-Fi commonly keep clients apart. Stated as "likely"
+    /// because it is an inference from absence, not something the network told
+    /// us.
     LikelyIsolated,
+    /// No other devices, on a network too small for that to be surprising — a
+    /// phone hotspot, for instance. Nothing here suggests interference.
+    NoPeersObserved,
     Normal,
 }
 
 /// Assess whether the network is isolating its clients.
-pub fn assess_isolation(devices: &[Device]) -> Isolation {
+/// The largest prefix still roomy enough that an empty result is worth
+/// remarking on. A /24 holds 254 hosts; a /28 holds 14.
+const ROOMY_PREFIX: u8 = 24;
+
+/// Assess whether the network is keeping its clients apart.
+///
+/// The size of the network is the evidence. Finding nobody on a /20 is odd;
+/// finding nobody on a hotspot's /28 is the normal shape of a hotspot, and
+/// calling that isolation would be inventing a finding. Without a known
+/// subnet there is no basis to choose, so the weaker claim is made.
+pub fn assess_isolation(devices: &[Device], subnet: Option<crate::network::Subnet>) -> Isolation {
     let others = devices
         .iter()
         .filter(|d| !d.is_self && !d.is_gateway)
         .count();
-    if others == 0 {
-        Isolation::LikelyIsolated
-    } else {
-        Isolation::Normal
+    if others > 0 {
+        return Isolation::Normal;
+    }
+
+    match subnet {
+        Some(subnet) if subnet.prefix_len <= ROOMY_PREFIX => Isolation::LikelyIsolated,
+        _ => Isolation::NoPeersObserved,
     }
 }
 
@@ -1437,7 +1454,16 @@ mod table_tests {
         table.mark_self(ip("192.168.1.10"));
 
         let devices = table.finish(no_vendor);
-        assert_eq!(assess_isolation(&devices), Isolation::LikelyIsolated);
+        assert_eq!(
+            assess_isolation(
+                &devices,
+                Some(crate::network::Subnet {
+                    network: "192.168.1.0".parse().unwrap(),
+                    prefix_len: 24,
+                })
+            ),
+            Isolation::LikelyIsolated
+        );
     }
 
     #[test]
@@ -1450,7 +1476,16 @@ mod table_tests {
         table.mark_self(ip("192.168.1.10"));
 
         let devices = table.finish(no_vendor);
-        assert_eq!(assess_isolation(&devices), Isolation::Normal);
+        assert_eq!(
+            assess_isolation(
+                &devices,
+                Some(crate::network::Subnet {
+                    network: "192.168.1.0".parse().unwrap(),
+                    prefix_len: 24,
+                })
+            ),
+            Isolation::Normal
+        );
     }
 }
 
@@ -1732,6 +1767,95 @@ mod inference_tests {
         assert_eq!(
             inference.family, None,
             "a name is not enough to say which kind of computer"
+        );
+    }
+}
+
+#[cfg(test)]
+mod isolation_tests {
+    use super::*;
+    use crate::network::Subnet;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+    fn subnet(net: &str, prefix: u8) -> Subnet {
+        Subnet {
+            network: net.parse().unwrap(),
+            prefix_len: prefix,
+        }
+    }
+
+    fn just_us(network: &str) -> Vec<Device> {
+        let mut t = DeviceTable::new();
+        t.observe(
+            Observation::new(ip(&format!("{network}.1")), DiscoveryMethod::ArpCache)
+                .with_mac(MacAddress::parse("00:0c:42:00:00:01")),
+        );
+        t.mark_gateway(ip(&format!("{network}.1")));
+        t.mark_self(ip(&format!("{network}.44")));
+        t.finish(|_| None)
+    }
+
+    /// A network with room for hundreds of hosts, where only the router
+    /// answered, is behaving like guest Wi-Fi that keeps clients apart.
+    #[test]
+    fn a_large_network_with_no_peers_reads_as_likely_isolation() {
+        let devices = just_us("10.7.3");
+        assert_eq!(
+            assess_isolation(&devices, Some(subnet("10.7.0.0", 20))),
+            Isolation::LikelyIsolated
+        );
+    }
+
+    /// A phone hotspot hands out a handful of addresses. Having no peers there
+    /// is unremarkable, and calling it isolation would be inventing a finding.
+    #[test]
+    fn a_tiny_network_with_no_peers_is_not_called_isolation() {
+        let devices = just_us("172.20.10");
+        assert_eq!(
+            assess_isolation(&devices, Some(subnet("172.20.10.0", 28))),
+            Isolation::NoPeersObserved
+        );
+    }
+
+    /// Without knowing how large the network is, there is no basis for
+    /// choosing between the two.
+    #[test]
+    fn an_unknown_subnet_size_yields_the_weaker_claim() {
+        let devices = just_us("10.7.3");
+        assert_eq!(assess_isolation(&devices, None), Isolation::NoPeersObserved);
+    }
+
+    #[test]
+    fn seeing_other_devices_is_normal_whatever_the_subnet() {
+        let mut t = DeviceTable::new();
+        t.observe(
+            Observation::new(ip("10.7.0.1"), DiscoveryMethod::ArpCache)
+                .with_mac(MacAddress::parse("00:0c:42:00:00:01")),
+        );
+        t.observe(
+            Observation::new(ip("10.7.0.9"), DiscoveryMethod::ArpCache)
+                .with_mac(MacAddress::parse("3c:aa:bb:00:00:02")),
+        );
+        t.mark_gateway(ip("10.7.0.1"));
+        t.mark_self(ip("10.7.3.44"));
+        let devices = t.finish(|_| None);
+
+        assert_eq!(
+            assess_isolation(&devices, Some(subnet("10.7.0.0", 20))),
+            Isolation::Normal
+        );
+    }
+
+    /// A /24 is the ordinary home case: large enough that an empty result is
+    /// worth remarking on.
+    #[test]
+    fn an_ordinary_home_subnet_with_no_peers_reads_as_likely_isolation() {
+        let devices = just_us("192.168.1");
+        assert_eq!(
+            assess_isolation(&devices, Some(subnet("192.168.1.0", 24))),
+            Isolation::LikelyIsolated
         );
     }
 }

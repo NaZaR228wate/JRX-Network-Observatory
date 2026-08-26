@@ -255,7 +255,7 @@ export interface DiscoveryQuality {
   local_network: LocalNetworkInference;
 }
 
-export type Isolation = "likely_isolated" | "normal";
+export type Isolation = "likely_isolated" | "no_peers_observed" | "normal";
 
 export interface DiscoverySummary {
   total: number;

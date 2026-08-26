@@ -1,4 +1,4 @@
-import type { DiscoveryQuality, SourceQuality } from "../types";
+import type { DiscoveryQuality, Isolation, SourceQuality } from "../types";
 
 /** Honest progress.
  *
@@ -63,36 +63,92 @@ function describe(source: SourceQuality): string {
   return `${source.observations} ${source.observations === 1 ? "entry" : "entries"}`;
 }
 
-/** How much to trust what is on the map. Never lets the map simply look
- *  broken. */
-export function QualityBanner({ quality }: { quality: DiscoveryQuality }) {
-  const tone =
-    quality.verdict === "healthy"
-      ? "ok"
-      : quality.verdict === "network_appears_empty"
-        ? "off"
-        : "warn";
-
-  const headline = () => {
-    if (quality.local_network === "likely_blocked") {
-      return "Devices are visible, but this network appears to block local discovery.";
-    }
-    switch (quality.verdict) {
-      case "healthy":
-        return "JRX is receiving local discovery information.";
-      case "degraded":
-        return "Some of the picture is missing.";
-      case "discovery_blocked":
-        return "Discovery could not run properly, so this is not an empty network.";
-      case "network_appears_empty":
-        return "Other devices cannot be observed from this connection.";
-    }
-  };
+/** How much to trust what is on the map.
+ *
+ *  Four distinct situations, deliberately not collapsed into one "nothing
+ *  found" message. They have different causes and different things the user
+ *  can do about them, and only the quality model decides which applies. */
+export function QualityBanner({
+  quality,
+  isolation,
+}: {
+  quality: DiscoveryQuality;
+  isolation: Isolation;
+}) {
+  const state = describeState(quality, isolation);
 
   return (
-    <div className={`banner ${tone}`}>
-      <strong>{headline()}</strong>
-      <div className="note">{quality.explanation}</div>
+    <div className={`banner ${state.tone}`}>
+      <strong>{state.headline}</strong>
+      <div className="note">{state.detail}</div>
     </div>
   );
+}
+
+export interface BannerState {
+  tone: "ok" | "warn" | "off";
+  headline: string;
+  detail: string;
+}
+
+export function describeState(quality: DiscoveryQuality, isolation: Isolation): BannerState {
+  // Our own failure comes first: an empty map caused by a broken probe must
+  // never be blamed on the network.
+  if (quality.verdict === "discovery_blocked") {
+    return {
+      tone: "warn",
+      headline: "JRX could not finish looking, so this is not an empty network.",
+      detail: quality.explanation,
+    };
+  }
+
+  // Devices demonstrably exist, but their announcements are not reaching us.
+  if (quality.local_network === "likely_blocked") {
+    return {
+      tone: "warn",
+      headline: "Devices are here, but local announcements are not reaching JRX.",
+      detail:
+        "Your computer knows about other devices, yet none of them announced " +
+        "themselves. Either this network suppresses those announcements, or " +
+        "macOS has not granted JRX local network access. macOS does not let " +
+        "JRX check which, so this is our reading of the evidence rather than " +
+        "something the system told us.",
+    };
+  }
+
+  if (isolation === "likely_isolated") {
+    return {
+      tone: "off",
+      headline: "This network appears to keep its devices apart.",
+      detail:
+        "Only your router answered, on a network with room for many more. " +
+        "Guest and workplace Wi-Fi commonly do this on purpose. JRX can still " +
+        "describe this computer and your connection, but it cannot see what " +
+        "the network is hiding — and no software can.",
+    };
+  }
+
+  if (isolation === "no_peers_observed") {
+    return {
+      tone: "off",
+      headline: "No other devices have answered yet.",
+      detail:
+        "This is a small network, so there may genuinely be nothing else on " +
+        "it. Every discovery source ran without error.",
+    };
+  }
+
+  if (quality.verdict === "degraded") {
+    return {
+      tone: "warn",
+      headline: "Part of the picture is missing.",
+      detail: quality.explanation,
+    };
+  }
+
+  return {
+    tone: "ok",
+    headline: "JRX is receiving local discovery information.",
+    detail: quality.explanation,
+  };
 }
