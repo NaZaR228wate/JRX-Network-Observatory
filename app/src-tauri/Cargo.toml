@@ -22,6 +22,9 @@ tauri = { version = "2", features = [] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
+[dev-dependencies]
+serde_json = { workspace = true }
+
 [features]
 # Development only. jrx-collector fails to compile with this feature in a
 # release build, so a fixture-backed binary cannot be shipped by accident.

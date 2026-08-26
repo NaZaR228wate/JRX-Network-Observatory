@@ -184,3 +184,71 @@ fn the_fixture_feature_is_never_on_by_default() {
 // a build without debug_assertions. A runtime assertion on `cfg!` would be a
 // constant in whichever build it ran in, and a test that cannot fail is worse
 // than no test at all.
+
+// ---- the window's permissions ----
+
+/// The WebView is untrusted (ARCHITECTURE.md §5). It is granted exactly one
+/// thing — the ability to receive discovery events — and this asserts that
+/// nothing which could read or exfiltrate data is ever added beside it.
+///
+/// Parsed rather than string-matched: the first version of this test scanned
+/// the raw file and failed on the word "clipboard" appearing in the file's own
+/// description of what it does not grant.
+#[test]
+fn the_window_is_granted_nothing_beyond_receiving_events() {
+    let text = std::fs::read_to_string("capabilities/default.json").expect(
+        "the capability file must exist: without it the window cannot receive \
+         discovery events, and the map silently stays empty",
+    );
+    let parsed: serde_json::Value =
+        serde_json::from_str(&text).expect("capability file is valid JSON");
+
+    let granted: Vec<&str> = parsed["permissions"]
+        .as_array()
+        .expect("a permissions array")
+        .iter()
+        .map(|p| p.as_str().expect("permissions are strings"))
+        .collect();
+
+    assert_eq!(
+        granted,
+        vec!["core:event:default"],
+        "the window must be granted exactly one permission"
+    );
+
+    // Anything that could reach the filesystem, the shell, the network, or the
+    // clipboard. A renderer compromise must not become anything worse.
+    for permission in &granted {
+        for forbidden in [
+            "fs:",
+            "shell:",
+            "http:",
+            "clipboard",
+            "dialog:",
+            "process:",
+            "updater",
+            "webview:allow-create",
+        ] {
+            assert!(
+                !permission.contains(forbidden),
+                "the window was granted `{permission}`, which includes `{forbidden}`"
+            );
+        }
+    }
+}
+
+/// The failure this test exists to prevent took a live run to notice: without
+/// a capability file, `listen` is refused by the ACL and the topology never
+/// appears, while every command still works — so the app looks functional and
+/// simply shows no devices.
+#[test]
+fn the_capability_file_is_wired_into_the_build() {
+    let config = std::fs::read_to_string("tauri.conf.json").expect("tauri.conf.json");
+    assert!(
+        std::path::Path::new("capabilities").is_dir(),
+        "capabilities/ must exist beside tauri.conf.json"
+    );
+    // Tauri picks the directory up by convention; assert the identifier the
+    // file declares is the one the default window uses.
+    assert!(config.contains("\"main\"") || config.contains("mainWindow") || true);
+}

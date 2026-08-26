@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import { Screen } from "./Screen";
 import type { ScreenData } from "./Screen";
 import type {
@@ -29,6 +30,9 @@ export function App() {
   const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
+    let disposed = false;
+    let unlisteners: UnlistenFn[] = [];
+
     // The identity resolves in a few hundred milliseconds, so the first thing
     // on screen is the answer to "what am I connected to?".
     invoke<NetworkIdentityReport>("get_network_identity")
@@ -36,7 +40,7 @@ export function App() {
       .catch((e: unknown) => setFailure(String(e)));
     invoke<CapabilityMatrix>("get_capabilities").then(setCapabilities).catch(() => undefined);
 
-    const unlisteners = [
+    const pending = [
       listen<DiscoveryStage>("discovery://stage", (event) => {
         const stage = event.payload;
         if (stage.stage === "source_finished") {
@@ -59,9 +63,26 @@ export function App() {
       listen<string>("discovery://failed", (event) => setFailure(event.payload)),
     ];
 
-    void invoke("start_discovery");
+    // Discovery must not start until the listeners are actually registered.
+    // The neighbour cache reports within milliseconds, and `listen` resolves
+    // asynchronously: starting first loses that first result, and with it the
+    // map's entire reason for appearing quickly.
+    Promise.all(pending)
+      .then((fns) => {
+        unlisteners = fns;
+        if (disposed) {
+          fns.forEach((fn) => fn());
+          return;
+        }
+        return invoke("start_discovery");
+      })
+      // Silence here would leave the map empty with no explanation, which is
+      // the one thing this product must never do.
+      .catch((e: unknown) => setFailure(`discovery could not start: ${String(e)}`));
+
     return () => {
-      void Promise.all(unlisteners).then((fns) => fns.forEach((fn) => fn()));
+      disposed = true;
+      unlisteners.forEach((fn) => fn());
     };
   }, []);
 

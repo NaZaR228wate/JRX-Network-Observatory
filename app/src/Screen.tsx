@@ -86,7 +86,13 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
 
       {/* 1. NETWORK, and 2. THIS DEVICE */}
       {identity ? (
-        <NetworkCard report={identity} selfAddress={overview?.self_node?.device_id ?? null} />
+        <NetworkCard
+          report={identity}
+          // From the identity, not from discovery: this address is known in
+          // the first few hundred milliseconds, and showing "unknown" while
+          // discovery runs would be wrong for four seconds.
+          selfAddress={identity.identity.local_ip ?? overview?.self_node?.device_id ?? null}
+        />
       ) : (
         <section className="netcard skeleton" aria-hidden="true" />
       )}

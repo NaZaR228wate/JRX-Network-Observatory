@@ -1,0 +1,9 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The minimum the JRX window needs: receive discovery events from the host. Nothing else is granted — no filesystem, no shell, no HTTP, no clipboard.",
+  "windows": ["main"],
+  "permissions": [
+    "core:event:default"
+  ]
+}
