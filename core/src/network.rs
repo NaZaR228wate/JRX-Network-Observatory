@@ -39,8 +39,6 @@ pub enum ConnectionType {
     Ethernet,
     /// A phone sharing its cellular connection over USB.
     UsbTether,
-    /// A tunnel holds the default route.
-    Vpn,
     /// Not determinable from available evidence. Reported honestly rather than
     /// guessed (TECH_DECISIONS.md ADR-008).
     Unknown,
@@ -58,10 +56,11 @@ impl ConnectionType {
     ) -> ConnectionType {
         let iface = interfaces.iter().find(|i| i.name == active);
 
-        // A tunnel is only a VPN when it carries the default route. Idle utun
-        // interfaces are normal on macOS and must not trigger this.
+        // A tunnel is a route, not a kind of link. Whatever is underneath it
+        // is what the machine is actually connected to, so the caller resolves
+        // the physical interface before asking this question.
         if iface.is_some_and(|i| i.is_point_to_point) {
-            return ConnectionType::Vpn;
+            return ConnectionType::Unknown;
         }
 
         let label = ports
@@ -109,10 +108,40 @@ impl ConnectionType {
             ConnectionType::Wifi => "Wi-Fi",
             ConnectionType::Ethernet => "Ethernet (wired)",
             ConnectionType::UsbTether => "Phone hotspot over USB",
-            ConnectionType::Vpn => "VPN tunnel",
             ConnectionType::Unknown => "Unknown connection",
         }
     }
+}
+
+/// One entry from the routing table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RouteEntry {
+    /// "default", "192.168.1", "127" — as the platform prints it.
+    pub destination: String,
+    pub gateway: Option<IpAddr>,
+    pub interface: String,
+}
+
+/// A tunnel carrying the default route.
+///
+/// Reported alongside the physical connection, never instead of it: "you are
+/// on Wi-Fi, and your traffic leaves through a VPN" is two facts, and
+/// collapsing them loses the one the user asked about.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Tunnel {
+    /// "utun6"
+    pub interface: String,
+    pub gateway: Option<IpAddr>,
+    pub local_ip: Option<Ipv4Addr>,
+}
+
+/// An interface that is up and addressed, but is not the primary one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ActiveInterface {
+    pub interface: String,
+    pub label: Option<String>,
+    pub connection: ConnectionType,
+    pub local_ip: Option<Ipv4Addr>,
 }
 
 /// The default route: which interface leaves this machine, and via which hop.
@@ -142,8 +171,11 @@ pub struct NetworkIdentity {
     pub gateway: Option<IpAddr>,
     pub dns_servers: Vec<IpAddr>,
     pub wifi: WifiStatus,
-    /// True when a tunnel holds the default route.
-    pub vpn_active: bool,
+    /// Set when a tunnel carries the default route. The fields above continue
+    /// to describe the physical network.
+    pub tunnel: Option<Tunnel>,
+    /// Other interfaces that are up and addressed.
+    pub other_active: Vec<ActiveInterface>,
 }
 
 /// Wi-Fi radio band.
@@ -255,14 +287,17 @@ mod tests {
         assert_eq!(got, ConnectionType::UsbTether);
     }
 
+    /// A tunnel is a route, not a kind of link. `classify` is asked only
+    /// about physical interfaces, so a tunnel handed to it is not something it
+    /// can describe — the caller resolves what lies beneath first.
     #[test]
-    fn point_to_point_interface_holding_default_route_is_vpn() {
+    fn a_tunnel_is_not_a_kind_of_physical_link() {
         let mut tunnel = iface("utun6");
         tunnel.is_point_to_point = true;
         tunnel.mac = None;
 
         let got = ConnectionType::classify("utun6", &[tunnel], &[]);
-        assert_eq!(got, ConnectionType::Vpn);
+        assert_eq!(got, ConnectionType::Unknown);
     }
 
     /// Observed on the development machine: six utun interfaces are UP and
@@ -329,14 +364,26 @@ impl NetworkIdentity {
     /// is testable against fixtures. Nothing is inferred when the evidence is
     /// absent -- a missing default route yields Unknown, not a guess at which
     /// interface is probably in use.
+    ///
+    /// A tunnel holding the default route does not become the connection. The
+    /// physical link beneath it is resolved first, and the tunnel is reported
+    /// alongside it.
     pub fn assemble(
-        route: Option<DefaultRoute>,
+        routes: &[RouteEntry],
         interfaces: &[InterfaceInfo],
         ports: &[HardwarePort],
         dns_servers: Vec<IpAddr>,
         wifi: WifiStatus,
     ) -> NetworkIdentity {
-        let Some(route) = route else {
+        let default_route = routes.iter().find(|r| r.destination == "default");
+        let describe = |name: &str| {
+            ports
+                .iter()
+                .find(|p| p.device == name)
+                .map(|p| p.label.clone())
+        };
+
+        let Some(default_route) = default_route else {
             return NetworkIdentity {
                 connection: ConnectionType::Unknown,
                 interface: String::new(),
@@ -346,34 +393,130 @@ impl NetworkIdentity {
                 gateway: None,
                 dns_servers,
                 wifi,
-                vpn_active: false,
+                tunnel: None,
+                other_active: Vec::new(),
             };
         };
 
-        let active = route.interface.as_str();
-        let connection = ConnectionType::classify(active, interfaces, ports);
-        let iface = interfaces.iter().find(|i| i.name == active);
+        let routed = interfaces
+            .iter()
+            .find(|i| i.name == default_route.interface);
 
-        let local_ip = iface.and_then(|i| i.ipv4);
-        let subnet = iface
-            .and_then(|i| Some((i.ipv4?, i.prefix_len?)))
-            .and_then(|(addr, prefix)| Subnet::of(addr, prefix));
+        // A tunnel carries traffic; it is not what the machine is attached to.
+        let tunnel = routed.filter(|i| i.is_point_to_point).map(|i| Tunnel {
+            interface: i.name.clone(),
+            gateway: default_route.gateway,
+            local_ip: i.ipv4,
+        });
+
+        // With a tunnel in the way, the physical link has to be found beneath
+        // it. Without one, the routed interface *is* the physical link.
+        let physical = if tunnel.is_some() {
+            physical_beneath_tunnel(routes, interfaces)
+        } else {
+            routed
+        };
+
+        let Some(physical) = physical else {
+            // A tunnel with nothing identifiable underneath. Say so, rather
+            // than presenting the tunnel as the physical connection.
+            return NetworkIdentity {
+                connection: ConnectionType::Unknown,
+                interface: String::new(),
+                interface_label: None,
+                local_ip: None,
+                subnet: None,
+                gateway: None,
+                dns_servers,
+                wifi,
+                tunnel,
+                other_active: other_active(interfaces, "", ports),
+            };
+        };
+
+        let name = physical.name.as_str();
+        let connection = ConnectionType::classify(name, interfaces, ports);
+
+        // The gateway of the network the user is on, which is not the tunnel's.
+        let gateway = if tunnel.is_some() {
+            routes
+                .iter()
+                .find(|r| r.interface == name && r.gateway.is_some())
+                .and_then(|r| r.gateway)
+        } else {
+            default_route.gateway
+        };
 
         NetworkIdentity {
             connection,
-            interface: route.interface.clone(),
-            interface_label: ports
-                .iter()
-                .find(|p| p.device == active)
-                .map(|p| p.label.clone()),
-            local_ip,
-            subnet,
-            gateway: Some(route.gateway),
+            interface: name.to_string(),
+            interface_label: describe(name),
+            local_ip: physical.ipv4,
+            subnet: physical
+                .ipv4
+                .zip(physical.prefix_len)
+                .and_then(|(addr, prefix)| Subnet::of(addr, prefix)),
+            gateway,
             dns_servers,
             wifi,
-            vpn_active: connection == ConnectionType::Vpn,
+            tunnel,
+            other_active: other_active(interfaces, name, ports),
         }
     }
+}
+
+/// Whether an interface could be a physical link carrying real traffic.
+fn is_physical_candidate(iface: &InterfaceInfo) -> bool {
+    iface.is_up
+        && iface.is_running
+        && !iface.is_loopback
+        && !iface.is_point_to_point
+        && iface.mac.is_some()
+        && iface.ipv4.is_some()
+}
+
+/// Find the interface a tunnel is running over.
+///
+/// The routing table is the evidence: the physical interface keeps routes of
+/// its own — its subnet, and usually a host route to the VPN endpoint — while
+/// the tunnel holds only the default. Whichever candidate carries the most
+/// routes is the one actually attached to a network. Ties break by name so the
+/// answer never depends on enumeration order.
+fn physical_beneath_tunnel<'a>(
+    routes: &[RouteEntry],
+    interfaces: &'a [InterfaceInfo],
+) -> Option<&'a InterfaceInfo> {
+    interfaces
+        .iter()
+        .filter(|i| is_physical_candidate(i))
+        .max_by(|a, b| {
+            let weight = |name: &str| routes.iter().filter(|r| r.interface == name).count();
+            weight(&a.name)
+                .cmp(&weight(&b.name))
+                // Reversed so the *lowest* name wins a tie, via max_by.
+                .then_with(|| b.name.cmp(&a.name))
+        })
+}
+
+/// Interfaces that are up and addressed but are not the primary one.
+fn other_active(
+    interfaces: &[InterfaceInfo],
+    primary: &str,
+    ports: &[HardwarePort],
+) -> Vec<ActiveInterface> {
+    interfaces
+        .iter()
+        .filter(|i| is_physical_candidate(i) && i.name != primary)
+        .map(|i| ActiveInterface {
+            interface: i.name.clone(),
+            label: ports
+                .iter()
+                .find(|p| p.device == i.name)
+                .map(|p| p.label.clone()),
+            connection: ConnectionType::classify(&i.name, interfaces, ports),
+            local_ip: i.ipv4,
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -428,9 +571,10 @@ mod assemble_tests {
         }
     }
 
-    fn route(iface: &str, gw: &str) -> DefaultRoute {
-        DefaultRoute {
-            gateway: gw.parse().unwrap(),
+    fn default_via(iface: &str, gw: &str) -> RouteEntry {
+        RouteEntry {
+            destination: "default".into(),
+            gateway: Some(gw.parse().unwrap()),
             interface: iface.into(),
         }
     }
@@ -439,7 +583,7 @@ mod assemble_tests {
     #[test]
     fn assembles_wired_identity_from_real_machine_shape() {
         let id = NetworkIdentity::assemble(
-            Some(route("en7", "172.16.0.1")),
+            &[default_via("en7", "172.16.0.1")],
             &[en7()],
             &[HardwarePort {
                 label: "AX88179B".into(),
@@ -460,7 +604,7 @@ mod assemble_tests {
             id.gateway.map(|g| g.to_string()).as_deref(),
             Some("172.16.0.1")
         );
-        assert!(!id.vpn_active);
+        assert!(id.tunnel.is_none());
     }
 
     /// A /23 network address is not simply the address with a zeroed last
@@ -468,7 +612,7 @@ mod assemble_tests {
     #[test]
     fn computes_subnet_from_prefix_not_from_octet_assumption() {
         let id = NetworkIdentity::assemble(
-            Some(route("en7", "172.16.0.1")),
+            &[default_via("en7", "172.16.0.1")],
             &[en7()],
             &[],
             vec![],
@@ -483,21 +627,20 @@ mod assemble_tests {
     fn wifi_identity_carries_association_details() {
         let mut en0 = en7();
         en0.name = "en0".into();
-        let details = WifiDetails {
-            ssid: Some("Observatory-5G".into()),
-            band: Some(Band::Ghz5),
-            ..Default::default()
-        };
 
         let id = NetworkIdentity::assemble(
-            Some(route("en0", "192.168.1.1")),
+            &[default_via("en0", "192.168.1.1")],
             &[en0],
             &[HardwarePort {
                 label: "Wi-Fi".into(),
                 device: "en0".into(),
             }],
             vec![],
-            WifiStatus::Associated(details),
+            WifiStatus::Associated(WifiDetails {
+                ssid: Some("Observatory-5G".into()),
+                band: Some(Band::Ghz5),
+                ..Default::default()
+            }),
         );
 
         assert_eq!(id.connection, ConnectionType::Wifi);
@@ -505,6 +648,20 @@ mod assemble_tests {
             panic!("expected association")
         };
         assert_eq!(w.ssid.as_deref(), Some("Observatory-5G"));
+    }
+
+    #[test]
+    fn interface_without_prefix_has_no_subnet_rather_than_a_default() {
+        let mut bare = en7();
+        bare.prefix_len = None;
+        let id = NetworkIdentity::assemble(
+            &[default_via("en7", "172.16.0.1")],
+            &[bare],
+            &[],
+            vec![],
+            WifiStatus::RadioOff,
+        );
+        assert!(id.subnet.is_none());
     }
 
     /// "The Wi-Fi command failed" and "this Mac has no Wi-Fi" are different
@@ -519,51 +676,268 @@ mod assemble_tests {
         assert_ne!(failed, WifiStatus::NoHardware);
         assert_ne!(failed, WifiStatus::RadioOff);
     }
+}
+
+#[cfg(test)]
+mod network_state_tests {
+    use super::*;
+
+    fn iface(name: &str, ip: Option<&str>, mac: Option<&str>) -> InterfaceInfo {
+        InterfaceInfo {
+            name: name.into(),
+            is_up: true,
+            is_running: true,
+            is_point_to_point: name.starts_with("utun") || name.starts_with("ppp"),
+            is_loopback: name == "lo0",
+            mac: mac.map(str::to_string),
+            ipv4: ip.map(|a| a.parse().unwrap()),
+            prefix_len: ip.map(|_| 24),
+        }
+    }
+    fn route(dest: &str, gw: Option<&str>, iface: &str) -> RouteEntry {
+        RouteEntry {
+            destination: dest.into(),
+            gateway: gw.map(|g| g.parse().unwrap()),
+            interface: iface.into(),
+        }
+    }
+    fn wifi_port() -> HardwarePort {
+        HardwarePort {
+            label: "Wi-Fi".into(),
+            device: "en0".into(),
+        }
+    }
+
+    // ---- A. Ethernet, the physically validated case ----
 
     #[test]
-    fn vpn_holding_default_route_sets_vpn_active() {
-        let tunnel = InterfaceInfo {
-            name: "utun6".into(),
-            is_point_to_point: true,
-            mac: None,
-            ipv4: Some("10.8.0.2".parse().unwrap()),
-            prefix_len: Some(24),
-            ..en7()
-        };
-
+    fn a_wired_connection_reports_no_tunnel() {
         let id = NetworkIdentity::assemble(
-            Some(route("utun6", "10.8.0.1")),
-            &[tunnel, en7()],
-            &[],
+            &[
+                route("default", Some("172.16.0.1"), "en7"),
+                route("172.16", None, "en7"),
+            ],
+            &[iface("en7", Some("172.16.0.89"), Some("9c:69:d3:6c:38:28"))],
+            &[HardwarePort {
+                label: "AX88179B".into(),
+                device: "en7".into(),
+            }],
             vec![],
             WifiStatus::RadioOff,
         );
 
-        assert_eq!(id.connection, ConnectionType::Vpn);
-        assert!(id.vpn_active);
+        assert_eq!(id.connection, ConnectionType::Ethernet);
+        assert_eq!(id.interface, "en7");
+        assert!(id.tunnel.is_none());
+    }
+
+    // ---- F. VPN must not replace the physical connection ----
+
+    /// The tunnel is how traffic leaves, not what the machine is connected to.
+    /// Reporting "VPN" as the connection loses the fact that the user is on
+    /// Wi-Fi, which is the thing they actually asked about.
+    #[test]
+    fn a_vpn_over_wifi_still_reports_wifi_as_the_connection() {
+        let id = NetworkIdentity::assemble(
+            &[
+                route("default", Some("10.8.0.1"), "utun6"),
+                route("192.168.1", None, "en0"),
+                route("198.51.100.7", Some("192.168.1.1"), "en0"),
+            ],
+            &[
+                iface("utun6", Some("10.8.0.2"), None),
+                iface("en0", Some("192.168.1.50"), Some("a4:83:e7:11:22:33")),
+            ],
+            &[wifi_port()],
+            vec![],
+            WifiStatus::Associated(WifiDetails {
+                ssid: Some("Home".into()),
+                ..Default::default()
+            }),
+        );
+
+        assert_eq!(
+            id.connection,
+            ConnectionType::Wifi,
+            "the physical link is Wi-Fi"
+        );
+        assert_eq!(
+            id.interface, "en0",
+            "the physical interface, not the tunnel"
+        );
+        assert_eq!(
+            id.local_ip.map(|a| a.to_string()).as_deref(),
+            Some("192.168.1.50"),
+            "the address on the network the user is actually on"
+        );
+
+        let tunnel = id
+            .tunnel
+            .as_ref()
+            .expect("the tunnel is reported separately");
+        assert_eq!(tunnel.interface, "utun6");
     }
 
     #[test]
-    fn no_default_route_yields_unknown_without_inventing_an_interface() {
-        let id = NetworkIdentity::assemble(None, &[en7()], &[], vec![], WifiStatus::RadioOff);
+    fn a_vpn_over_ethernet_still_reports_ethernet() {
+        let id = NetworkIdentity::assemble(
+            &[
+                route("default", Some("10.8.0.1"), "utun4"),
+                route("172.16", None, "en7"),
+            ],
+            &[
+                iface("utun4", Some("10.8.0.2"), None),
+                iface("en7", Some("172.16.0.89"), Some("9c:69:d3:6c:38:28")),
+            ],
+            &[HardwarePort {
+                label: "AX88179B".into(),
+                device: "en7".into(),
+            }],
+            vec![],
+            WifiStatus::RadioOff,
+        );
+
+        assert_eq!(id.connection, ConnectionType::Ethernet);
+        assert!(id.tunnel.is_some());
+    }
+
+    /// Observed on the development machine: six utun interfaces are UP and
+    /// RUNNING with no VPN active. macOS uses them for its own services.
+    #[test]
+    fn idle_tunnels_are_not_reported_as_a_vpn() {
+        let id = NetworkIdentity::assemble(
+            &[
+                route("default", Some("172.16.0.1"), "en7"),
+                route("172.16", None, "en7"),
+            ],
+            &[
+                iface("utun0", None, None),
+                iface("utun1", None, None),
+                iface("en7", Some("172.16.0.89"), Some("9c:69:d3:6c:38:28")),
+            ],
+            &[],
+            vec![],
+            WifiStatus::RadioOff,
+        );
+        assert!(
+            id.tunnel.is_none(),
+            "a live tunnel is not a VPN unless it carries traffic"
+        );
+    }
+
+    // ---- D. Wi-Fi with the network name withheld ----
+
+    /// "Wi-Fi, network name unavailable" and "unknown connection" are
+    /// different facts. macOS withholding the SSID says nothing about what
+    /// kind of link this is.
+    #[test]
+    fn a_withheld_ssid_does_not_downgrade_the_connection_to_unknown() {
+        let id = NetworkIdentity::assemble(
+            &[route("default", Some("192.168.1.1"), "en0")],
+            &[iface(
+                "en0",
+                Some("192.168.1.50"),
+                Some("a4:83:e7:11:22:33"),
+            )],
+            &[wifi_port()],
+            vec![],
+            WifiStatus::PermissionRequired,
+        );
+
+        assert_eq!(id.connection, ConnectionType::Wifi);
+        assert_eq!(id.wifi, WifiStatus::PermissionRequired);
+    }
+
+    // ---- C. Radio off ----
+
+    #[test]
+    fn wifi_hardware_with_the_radio_off_is_not_the_active_connection() {
+        let id = NetworkIdentity::assemble(
+            &[route("default", Some("172.16.0.1"), "en7")],
+            &[
+                iface("en0", None, Some("fc:b2:14:b9:60:8b")),
+                iface("en7", Some("172.16.0.89"), Some("9c:69:d3:6c:38:28")),
+            ],
+            &[
+                wifi_port(),
+                HardwarePort {
+                    label: "AX88179B".into(),
+                    device: "en7".into(),
+                },
+            ],
+            vec![],
+            WifiStatus::RadioOff,
+        );
+        assert_eq!(id.connection, ConnectionType::Ethernet);
+    }
+
+    // ---- H. Multiple active interfaces ----
+
+    #[test]
+    fn other_active_interfaces_are_reported_without_being_confused_for_the_primary() {
+        let id = NetworkIdentity::assemble(
+            &[
+                route("default", Some("172.16.0.1"), "en7"),
+                route("192.168.1", None, "en0"),
+            ],
+            &[
+                iface("en7", Some("172.16.0.89"), Some("9c:69:d3:6c:38:28")),
+                iface("en0", Some("192.168.1.50"), Some("a4:83:e7:11:22:33")),
+            ],
+            &[wifi_port()],
+            vec![],
+            WifiStatus::Associated(WifiDetails::default()),
+        );
+
+        assert_eq!(id.interface, "en7", "the default route decides the primary");
+        let others: Vec<&str> = id
+            .other_active
+            .iter()
+            .map(|i| i.interface.as_str())
+            .collect();
+        assert_eq!(others, vec!["en0"]);
+    }
+
+    #[test]
+    fn loopback_is_never_reported_as_an_active_interface() {
+        let id = NetworkIdentity::assemble(
+            &[route("default", Some("172.16.0.1"), "en7")],
+            &[
+                iface("lo0", Some("127.0.0.1"), None),
+                iface("en7", Some("172.16.0.89"), Some("9c:69:d3:6c:38:28")),
+            ],
+            &[],
+            vec![],
+            WifiStatus::RadioOff,
+        );
+        assert!(id.other_active.iter().all(|i| i.interface != "lo0"));
+    }
+
+    // ---- G. No usable network ----
+
+    #[test]
+    fn no_default_route_reports_unknown_without_inventing_an_interface() {
+        let id = NetworkIdentity::assemble(&[], &[], &[], vec![], WifiStatus::RadioOff);
 
         assert_eq!(id.connection, ConnectionType::Unknown);
         assert!(id.interface.is_empty());
         assert!(id.gateway.is_none());
-        assert!(id.local_ip.is_none());
+        assert!(id.tunnel.is_none());
     }
 
+    /// A tunnel with no discoverable physical link beneath it must say so
+    /// rather than presenting the tunnel as the physical connection.
     #[test]
-    fn interface_without_prefix_has_no_subnet_rather_than_a_default() {
-        let mut bare = en7();
-        bare.prefix_len = None;
+    fn a_tunnel_with_no_physical_link_beneath_it_reports_unknown_not_vpn() {
         let id = NetworkIdentity::assemble(
-            Some(route("en7", "172.16.0.1")),
-            &[bare],
+            &[route("default", Some("10.8.0.1"), "utun6")],
+            &[iface("utun6", Some("10.8.0.2"), None)],
             &[],
             vec![],
             WifiStatus::RadioOff,
         );
-        assert!(id.subnet.is_none());
+
+        assert_eq!(id.connection, ConnectionType::Unknown);
+        assert!(id.tunnel.is_some(), "the tunnel itself is still reported");
     }
 }

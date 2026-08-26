@@ -5,7 +5,6 @@ export function connectionLabel(c: ConnectionType): string {
     case "wifi": return "Wi-Fi";
     case "ethernet": return "Ethernet (wired)";
     case "usb_tether": return "Phone hotspot over USB";
-    case "vpn": return "VPN tunnel";
     case "unknown": return "Unknown connection";
   }
 }

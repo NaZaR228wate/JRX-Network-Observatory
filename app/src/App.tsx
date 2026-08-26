@@ -65,7 +65,7 @@ export function App() {
           <dt>You are connected via</dt>
           <dd>
             {connectionLabel(id.connection)}
-            {id.vpn_active && <> <span className="pill warn">VPN active</span></>}
+            {id.tunnel && <> <span className="pill warn">Traffic leaves via a tunnel</span></>}
             {id.connection === "unknown" && (
               <div className="note">
                 No default route was found, so JRX will not guess how you are

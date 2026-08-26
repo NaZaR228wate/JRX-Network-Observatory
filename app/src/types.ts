@@ -38,12 +38,23 @@ export interface CapabilityMatrix {
   permissions: PermissionInfo[];
 }
 
-export type ConnectionType =
-  | "wifi"
-  | "ethernet"
-  | "usb_tether"
-  | "vpn"
-  | "unknown";
+/** The physical link. A tunnel is a route, not a kind of link, so it is
+ *  reported separately and never replaces this. */
+export type ConnectionType = "wifi" | "ethernet" | "usb_tether" | "unknown";
+
+/** A tunnel carrying the default route, over the physical connection. */
+export interface Tunnel {
+  interface: string;
+  gateway: string | null;
+  local_ip: string | null;
+}
+
+export interface ActiveInterface {
+  interface: string;
+  label: string | null;
+  connection: ConnectionType;
+  local_ip: string | null;
+}
 
 export type Band = "ghz2_4" | "ghz5" | "ghz6";
 
@@ -77,7 +88,10 @@ export interface NetworkIdentity {
   gateway: string | null;
   dns_servers: string[];
   wifi: WifiStatus;
-  vpn_active: boolean;
+  /** Set when traffic leaves through a tunnel. The fields above continue to
+   *  describe the physical network. */
+  tunnel: Tunnel | null;
+  other_active: ActiveInterface[];
 }
 
 export interface NetworkIdentityReport {

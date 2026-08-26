@@ -60,7 +60,7 @@ pub fn observe() -> Result<NetworkIdentity, ProbeError> {
     };
 
     Ok(NetworkIdentity::assemble(
-        parse::parse_default_route(&routes),
+        &parse::parse_routes(&routes),
         &parse::parse_interfaces(&ifaces),
         &parse::parse_hardware_ports(&ports),
         parse::parse_dns_servers(&dns),

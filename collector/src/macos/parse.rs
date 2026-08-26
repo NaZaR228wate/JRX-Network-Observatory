@@ -8,7 +8,42 @@
 
 use std::net::{IpAddr, Ipv4Addr};
 
-use jrx_core::network::{Band, DefaultRoute, HardwarePort, InterfaceInfo, WifiDetails, WifiStatus};
+use jrx_core::network::{
+    Band, DefaultRoute, HardwarePort, InterfaceInfo, RouteEntry, WifiDetails, WifiStatus,
+};
+
+/// Parse every usable entry from `netstat -rn -f inet`.
+///
+/// The whole table is needed, not just the default: when a VPN holds the
+/// default route, the routes belonging to each interface are the evidence for
+/// which physical link the tunnel is running over.
+pub fn parse_routes(output: &str) -> Vec<RouteEntry> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let mut cols = line.split_whitespace();
+            let destination = cols.next()?;
+            let gateway = cols.next()?;
+            let flags = cols.next()?;
+            let interface = cols.next()?;
+
+            // Header and section lines have no flags column shaped like this.
+            if !flags.starts_with('U') && flags != "UGScg" {
+                return None;
+            }
+            if !interface.chars().next()?.is_ascii_alphabetic() {
+                return None;
+            }
+
+            Some(RouteEntry {
+                destination: destination.to_string(),
+                // `link#13` and MAC-shaped gateways are not addresses.
+                gateway: gateway.parse().ok(),
+                interface: interface.to_string(),
+            })
+        })
+        .collect()
+}
 
 /// Parse `netstat -rn -f inet`.
 pub fn parse_default_route(output: &str) -> Option<DefaultRoute> {
@@ -324,6 +359,38 @@ resolver #2
         let route = parse_default_route(NETSTAT).expect("a default route exists");
         assert_eq!(route.interface, "en7");
         assert_eq!(route.gateway.to_string(), "172.16.0.1");
+    }
+
+    #[test]
+    fn reads_the_whole_routing_table_not_just_the_default() {
+        let routes = parse_routes(NETSTAT);
+
+        assert!(
+            routes
+                .iter()
+                .any(|r| r.destination == "default" && r.interface == "en7")
+        );
+        assert!(
+            routes.iter().filter(|r| r.interface == "en7").count() >= 2,
+            "per-interface routes are the evidence for what a tunnel runs over"
+        );
+        assert!(
+            !routes.iter().any(|r| r.destination == "Destination"),
+            "the header row must not become a route"
+        );
+    }
+
+    /// `link#13` in the gateway column is not an address, and must not be
+    /// parsed as one.
+    #[test]
+    fn a_link_layer_gateway_is_recorded_without_an_address() {
+        let routes = parse_routes(NETSTAT);
+        let link_local = routes
+            .iter()
+            .find(|r| r.destination == "169.254")
+            .expect("the link-local route is present");
+        assert!(link_local.gateway.is_none());
+        assert_eq!(link_local.interface, "en7");
     }
 
     #[test]
