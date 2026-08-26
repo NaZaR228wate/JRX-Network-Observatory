@@ -156,6 +156,25 @@ the app.
 
 ---
 
+### M4.5 · Product validation — complete
+
+Not in the original plan. Added because M0–M4 had never been checked as a
+single product, and several connection modes had gone four milestones without
+validation.
+
+- Physical link separated from tunnel: a VPN no longer replaces the connection
+- Seven deterministic scenario fixtures, development-only, running through the
+  real pipeline
+- Home screen reordered to network → this device → devices → visibility
+- Four distinct degraded states, chosen by the quality model
+- Group filtering on observed facts
+- Bounded rendering proved at 506 devices: 7 nodes at level 1, 40 at level 2
+- Two bugs found only by running against a real network (see the M4.5 report)
+
+**Exit:** the 30-second test passes on a real network and on every fixture.
+
+---
+
 ### M5 · Traffic — 3 days
 
 - `ifcounters` probe; throughput from counter deltas

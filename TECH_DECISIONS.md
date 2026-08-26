@@ -391,6 +391,56 @@ either misleading marketing or abandoning the honesty that defines the product.
 
 ---
 
+## ADR-016 — A tunnel is a route, not a connection type
+
+**Context.** `ConnectionType::Vpn` was one of the connection kinds, so a VPN
+holding the default route made the connection "VPN" and the interface `utun6`.
+
+**Decision.** Removed. `NetworkIdentity` describes the physical link, and a
+tunnel is reported alongside it.
+
+**Rejected — keeping Vpn as a connection kind.** Simpler, and it is what most
+tools show. But it loses the answer to the question the user actually asked —
+which network am I on — along with the real address, subnet and gateway.
+
+**Consequences.**
+- The physical link beneath a tunnel is resolved from the routing table, since
+  the physical interface keeps routes of its own while the tunnel holds only
+  the default. Ties break by name so the answer never depends on enumeration
+  order.
+- A tunnel with nothing identifiable beneath it reports Unknown and still names
+  the tunnel, rather than presenting the tunnel as the physical connection.
+- **Cost:** a heuristic. Documented as one, and covered by fixtures for VPN
+  over Wi-Fi and over Ethernet.
+
+---
+
+## ADR-017 — Fixtures are development-only, enforced at compile time
+
+**Context.** Validating seven connection modes requires networks that cannot
+all exist on one machine at one time.
+
+**Decision.** A `fixtures` cargo feature, off by default, that supplies routes,
+interfaces and observations to the *real* pipeline. `compile_error!` in both
+`jrx-collector` and `jrx-app` when the feature is enabled without
+`debug_assertions`.
+
+**Rejected — a separate demo data model.** Far easier, and worthless: a demo
+model that behaved differently from production would validate nothing, and
+would drift the moment production changed.
+
+**Rejected — a runtime flag or a hidden UI switch.** A shipped binary that can
+be made to fabricate a network on command is a binary that can lie.
+
+**Consequences.**
+- `cargo build --release --features fixtures` fails to compile. Verified.
+- A test asserts the feature is never in a default set in either manifest.
+- **Cost:** fixtures must be kept faithful. The university fixture initially
+  used invented OUI prefixes and reported zero manufacturer-known devices —
+  nothing like the network it stands in for. Caught during M4.5 and corrected.
+
+---
+
 ## Summary
 
 | ADR | Decision |
@@ -410,3 +460,5 @@ either misleading marketing or abandoning the honesty that defines the product.
 | 013 | Signing, notarization, and updates deferred to the product phase |
 | 014 | Rename `telemetry/` → `metrics/` |
 | 015 | Mobile is a companion, not a port |
+| 016 | A tunnel is a route, not a connection type |
+| 017 | Fixtures are development-only, enforced at compile time |

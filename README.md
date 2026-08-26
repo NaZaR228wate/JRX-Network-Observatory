@@ -31,6 +31,14 @@ Future:
 - Android
 - iOS
 
+## What JRX does and does not do
+
+See [PRODUCT_BOUNDARIES.md](PRODUCT_BOUNDARIES.md). In short: JRX identifies
+your network connection, discovers locally observable devices, and explains
+what it knows and why. It does not capture packet contents, read messages or
+passwords, build browsing history, inspect other devices' traffic, or ask for
+administrator access.
+
 ## Running JRX
 
 Requires the Rust toolchain on `PATH`:
@@ -50,6 +58,17 @@ cd app && npm install && npm run dev:app
 ```
 cd app && npm run build:app
 ```
+
+**Development scenarios** — deterministic networks for validation, including
+modes that cannot be reproduced on demand:
+
+```
+cd app && JRX_FIXTURE=home_wifi npm run demo
+```
+
+Available: `home_wifi`, `university_wifi`, `ethernet`, `hotspot`, `vpn`,
+`isolated_network`, `permission_limited`, `stress_500`. This requires the
+`fixtures` feature, which fails to compile in a release build.
 
 ### Do not run the binary from `cargo` directly
 

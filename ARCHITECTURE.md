@@ -261,8 +261,12 @@ labels a partial picture as partial.
 
 On every network change the collector resolves a `NetworkProfile`:
 
-- **Connection type** — from interface link type and route metric:
-  `Wifi` · `Ethernet` · `CellularHotspot` · `Virtual` (VPN/tunnel) · `Unknown`
+- **Connection type** — the *physical* link, from interface link type and the
+  routing table: `Wifi` · `Ethernet` · `UsbTether` · `Unknown`.
+  A tunnel is **not** a connection type. When one carries the default route it
+  is reported alongside the physical link, which is resolved from the routing
+  table: the physical interface keeps routes of its own while the tunnel holds
+  only the default (M4.5).
 - **Hotspot detection** — heuristic, and labeled as a heuristic in the UI:
   the OS metered-connection flag, carrier OUI on the gateway MAC, characteristic
   hotspot subnets, and cellular-class interface naming.
@@ -273,9 +277,10 @@ On every network change the collector resolves a `NetworkProfile`:
   lets the app say "you have been here before" without any account or server.
   It never leaves the device.
 
-**A `Virtual` interface holding the default route means an active VPN, and the app
-says so plainly** — the local network becomes partially or wholly invisible, and
-that is a Visibility Panel row, not a bug.
+**A tunnel holding the default route is reported as a route, not as the
+connection.** Replacing "Wi-Fi / Home / 192.168.1.14" with "VPN / utun6" loses
+the thing the user asked about. The physical link, its address, its subnet and
+its gateway all continue to be reported; the tunnel is an additional fact.
 
 ---
 
@@ -448,7 +453,8 @@ these is a **designed state with specific copy**, not a fallback:
 | Client isolation detected | *"This network isolates its clients — you are intentionally prevented from seeing other devices. This is the network working correctly."* |
 | VPN holds the default route | Local visibility reduced; explained as a consequence of the VPN, not an error |
 | Ethernet with no WiFi hardware | WiFi rows shown as Not applicable, not as failures |
-| Zero devices found | Distinguishes *isolated*, *permission-blocked*, and *genuinely empty* — three different messages |
+| Zero devices found | Four different messages, chosen by the quality model: our probe was refused; devices exist but are not announcing; the network has room for many hosts and only the router answered; the network is genuinely small. Isolation is assessed against the subnet size, so a hotspot's /28 is never called client isolation (M4.5) |
+| A probe refused by the OS | `SourceStatus::Refused` is distinct from `Failed`. macOS reports a denied Local Network permission as `EHOSTUNREACH`, the same errno as a routing fault; JRX names it as a permission problem and points at the setting (M4.5) |
 
 **The failure mode this section exists to prevent:** a demo on guest WiFi that shows
 an empty circle with no explanation. On any network, JRX must be able to explain
