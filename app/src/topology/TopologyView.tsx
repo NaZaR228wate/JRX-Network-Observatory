@@ -97,13 +97,26 @@ function OverviewLevel({
       {placed.map((spot) => {
         const group = overview.groups.find((g) => g.category === spot.category);
         if (!group) return null;
+
+        // The router is drawn in the centre, so its own category's ring is
+        // empty. Showing a bare "0" there reads as broken when in fact the
+        // one device is right in the middle of the picture.
+        const routerOnly =
+          group.category === "infrastructure" &&
+          group.count === 0 &&
+          overview.center !== null;
+
         return (
           <GroupNode
             key={spot.category}
             x={spot.x}
             y={spot.y}
             group={group}
-            onOpen={() => group.count > 0 && onOpenGroup(group.category)}
+            routerOnly={routerOnly}
+            onOpen={() => {
+              if (routerOnly && overview.center) onSelectDevice(overview.center);
+              else if (group.count > 0) onOpenGroup(group.category);
+            }}
           />
         );
       })}
@@ -139,35 +152,41 @@ function GroupNode({
   x,
   y,
   group,
+  routerOnly,
   onOpen,
 }: {
   x: number;
   y: number;
   group: CategorySummary;
+  routerOnly: boolean;
   onOpen: () => void;
 }) {
-  const empty = group.count === 0;
+  const interactive = group.count > 0 || routerOnly;
   const r = nodeRadius("group");
 
   return (
     <g
-      className={`node group ${categoryTone(group.category)} ${empty ? "empty" : ""}`}
+      className={`node group ${categoryTone(group.category)} ${interactive ? "" : "empty"}`}
       transform={`translate(${x} ${y})`}
-      role={empty ? undefined : "button"}
-      tabIndex={empty ? undefined : 0}
-      aria-label={`${group.label}, ${group.count} devices`}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      aria-label={
+        routerOnly
+          ? "Infrastructure: 1 device, your router, shown in the centre"
+          : `${group.label}, ${group.count} devices`
+      }
       onClick={onOpen}
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onOpen()}
     >
       <circle r={r} className="node-body" />
       <text className="node-count" dy="0.35em">
-        {group.count}
+        {routerOnly ? 1 : group.count}
       </text>
       <text className="node-label" y={r + 18}>
         {group.label}
       </text>
       <text className="node-sub" y={r + 33}>
-        {categoryGlyph(group.category)}
+        {routerOnly ? "router, in centre" : categoryGlyph(group.category)}
       </text>
     </g>
   );

@@ -129,7 +129,9 @@ body {
 
 /* ---- Topology ---- */
 
-.shell { max-width: 1180px; padding-top: 26px; }
+/* Wide enough to give the map room on a large display, still narrow
+   enough that the prose columns inside stay readable. */
+.shell { max-width: 1320px; padding-top: 26px; }
 
 .topo-shell { margin-top: 34px; }
 .topo-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; }
@@ -158,7 +160,7 @@ body {
 .banner .note { margin-top: 3px; }
 
 .topo-body {
-  display: grid; grid-template-columns: minmax(0, 1fr) 330px;
+  display: grid; grid-template-columns: minmax(0, 1fr) 360px;
   gap: 16px; margin-top: 12px; align-items: start;
 }
 
@@ -199,6 +201,7 @@ body {
 }
 .node-label { fill: var(--text); font-size: 12px; text-anchor: middle; }
 .node-sub { fill: var(--muted); font-size: 12px; text-anchor: middle; }
+.node.group .node-sub { font-size: 10px; }
 .group-anchor { fill: #17202b; stroke: var(--line); stroke-width: 1.5; }
 
 .dimmed { opacity: 0.18; transition: opacity 160ms ease; }
