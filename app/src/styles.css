@@ -261,7 +261,9 @@ body {
   border-bottom: 1px solid var(--line);
 }
 .progress-list li:last-child { border-bottom: none; }
-.progress-list .tick { color: var(--ok); }
+.progress-list .tick.ok { color: var(--ok); }
+.progress-list .tick.refused { color: var(--warn); }
+.progress-list .tick.failed { color: var(--warn); }
 .progress-list .waiting .tick { color: var(--off); }
 .progress-list .src { color: var(--text); }
 .progress-list .result { color: var(--muted); font-size: 12px; }

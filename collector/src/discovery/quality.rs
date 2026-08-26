@@ -35,7 +35,7 @@ impl SourceQuality {
 
     fn failure(&self) -> Option<&str> {
         match &self.status {
-            SourceStatus::Failed { reason } => Some(reason),
+            SourceStatus::Failed { reason } | SourceStatus::Refused { reason } => Some(reason),
             SourceStatus::Ok { .. } => None,
         }
     }
@@ -130,6 +130,16 @@ pub fn assess(sources: &[SourceQuality], devices_found: usize) -> DiscoveryQuali
 
 /// Read Local Network access from behaviour.
 fn infer_local_network(sources: &[SourceQuality]) -> LocalNetworkInference {
+    // An outright refusal is the strongest evidence there is: the request was
+    // rejected before it reached the network. It outranks another source that
+    // appeared to work.
+    if sources
+        .iter()
+        .any(|s| matches!(s.status, SourceStatus::Refused { .. }))
+    {
+        return LocalNetworkInference::LikelyBlocked;
+    }
+
     let find = |method: DiscoveryMethod| sources.iter().find(|s| s.method == method);
 
     let Some(mdns) = find(DiscoveryMethod::Mdns) else {
@@ -282,6 +292,36 @@ mod tests {
             1,
         );
         assert_eq!(quality.local_network, LocalNetworkInference::Undetermined);
+    }
+
+    /// A source the OS refused outright is the strongest evidence available
+    /// that local network access is blocked — stronger than silence, because
+    /// the refusal happened before anything reached the network.
+    #[test]
+    fn a_refused_source_outweighs_a_source_that_seemed_to_work() {
+        let quality = assess(
+            &[
+                source(DiscoveryMethod::ArpCache, 139),
+                // mDNS returned something, which on its own would read as
+                // working...
+                source(DiscoveryMethod::Mdns, 3),
+                SourceQuality {
+                    status: SourceStatus::Refused {
+                        reason: "local network access appears to be blocked".into(),
+                    },
+                    ..source(DiscoveryMethod::Ssdp, 0)
+                },
+            ],
+            139,
+        );
+
+        assert_eq!(
+            quality.local_network,
+            LocalNetworkInference::LikelyBlocked,
+            "a refusal must not be overridden by another source appearing to work"
+        );
+        assert_eq!(quality.verdict, DiscoveryVerdict::Degraded);
+        assert!(quality.explanation.contains("blocked"));
     }
 
     #[test]

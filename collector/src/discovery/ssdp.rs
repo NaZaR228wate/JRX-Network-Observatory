@@ -40,6 +40,25 @@ impl SsdpResponse {
     }
 }
 
+/// Turn a send failure into something a person can act on.
+///
+/// macOS reports a denied Local Network permission as `EHOSTUNREACH` on the
+/// multicast send — the same error a genuine routing fault produces. Passing
+/// that through as "No route to host" sends the reader looking for a network
+/// problem that is not there. macOS offers no API to confirm which it is, so
+/// this is stated as what it appears to be rather than as a fact
+/// (TECH_DECISIONS.md ADR-008).
+fn classify_send_failure(error: &std::io::Error) -> ProbeError {
+    if error.kind() == std::io::ErrorKind::HostUnreachable {
+        return ProbeError::Refused(
+            "local network access appears to be blocked for JRX by macOS \
+             (the multicast request was refused before it reached the network)"
+                .to_string(),
+        );
+    }
+    ProbeError::Failed(format!("ssdp send: {error}"))
+}
+
 /// Parse one SSDP reply or advertisement.
 ///
 /// Returns `None` for anything that is not a device announcing its presence —
@@ -119,9 +138,9 @@ pub fn discover(local: Ipv4Addr, window: Duration) -> Result<Vec<SsdpResponse>, 
 
     // Some stacks drop the first datagram while the multicast route settles.
     for _ in 0..2 {
-        socket
-            .send_to(request.as_bytes(), target)
-            .map_err(|e| ProbeError::Failed(format!("ssdp send: {e}")))?;
+        if let Err(e) = socket.send_to(request.as_bytes(), target) {
+            return Err(classify_send_failure(&e));
+        }
     }
 
     let deadline = Instant::now() + window;

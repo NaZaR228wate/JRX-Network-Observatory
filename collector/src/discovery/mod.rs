@@ -38,6 +38,10 @@ pub enum SourceStatus {
     Ok { observations: usize },
     /// Failed. Reported as a fault in JRX, never as an absence of devices.
     Failed { reason: String },
+    /// The operating system refused the request before it reached the
+    /// network. Distinct from a failure, because it says something specific:
+    /// JRX is not permitted to do this here.
+    Refused { reason: String },
 }
 
 /// Everything discovery produced.
@@ -224,6 +228,7 @@ pub fn observe_with_progress(
         table.mark_gateway(gateway);
     }
     if let Some(local) = identity.local_ip {
+        name_this_computer(&mut table, local);
         table.mark_self(IpAddr::V4(local));
     }
 
@@ -295,10 +300,32 @@ fn partial_devices(
         table.mark_gateway(gateway);
     }
     if let Some(local) = identity.local_ip {
+        name_this_computer(&mut table, local);
         table.mark_self(IpAddr::V4(local));
     }
     table.finish(oui::vendor_of)
 }
+
+/// Record this computer's own name, read from the OS.
+///
+/// Without it, a Mac whose traffic runs over a USB Ethernet adapter is
+/// displayed as an "ASIX Electronics device" until it happens to announce
+/// itself over mDNS — which on a network that suppresses announcements is
+/// never.
+#[cfg(target_os = "macos")]
+fn name_this_computer(table: &mut DeviceTable, local: std::net::Ipv4Addr) {
+    if let Ok(name) = crate::macos::exec::computer_name()
+        && !name.is_empty()
+    {
+        table.observe(
+            Observation::new(IpAddr::V4(local), DiscoveryMethod::SelfInterface)
+                .with_hostname(Some(name)),
+        );
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn name_this_computer(_: &mut DeviceTable, _: std::net::Ipv4Addr) {}
 
 #[cfg(not(target_os = "macos"))]
 fn partial_devices(_: &NetworkIdentity, _: &[ArpStub]) -> Vec<Device> {
@@ -308,6 +335,9 @@ fn partial_devices(_: &NetworkIdentity, _: &[ArpStub]) -> Vec<Device> {
 fn status_of(result: Result<usize, &ProbeError>) -> SourceStatus {
     match result {
         Ok(observations) => SourceStatus::Ok { observations },
+        Err(ProbeError::Refused(reason)) => SourceStatus::Refused {
+            reason: reason.clone(),
+        },
         Err(e) => SourceStatus::Failed {
             reason: e.to_string(),
         },

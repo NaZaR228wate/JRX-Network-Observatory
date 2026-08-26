@@ -1859,3 +1859,50 @@ mod isolation_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod self_naming_tests {
+    use super::*;
+
+    fn ip(s: &str) -> IpAddr {
+        s.parse().unwrap()
+    }
+
+    /// JRX runs on this machine and can ask the OS its name. Falling back to a
+    /// manufacturer — "ASIX Electronics device" for a MacBook whose traffic
+    /// happens to run over a USB dongle — is not something a user should ever
+    /// see for their own computer.
+    #[test]
+    fn this_computer_is_named_from_the_operating_system() {
+        let mut table = DeviceTable::new();
+        table.observe(
+            Observation::new(ip("172.16.0.207"), DiscoveryMethod::ArpCache)
+                .with_mac(MacAddress::parse("9c:69:d3:6c:38:28")),
+        );
+        table.observe(
+            Observation::new(ip("172.16.0.207"), DiscoveryMethod::SelfInterface)
+                .with_hostname(Some("Nazar's MacBook Pro".into())),
+        );
+        table.mark_self(ip("172.16.0.207"));
+
+        let devices = table.finish(|_| Some("ASIX Electronics"));
+        let me = devices.iter().find(|d| d.is_self).expect("this machine");
+
+        assert_eq!(me.display_name(), "Nazar's MacBook Pro");
+        // The manufacturer is still reported as an observed fact.
+        assert_eq!(me.facts.vendor.as_deref(), Some("ASIX Electronics"));
+    }
+
+    /// Without a name from the OS the old fallback still applies, so the
+    /// naming path must not be the only thing keeping this device on the map.
+    #[test]
+    fn an_unnamed_self_device_still_appears() {
+        let mut table = DeviceTable::new();
+        table.mark_self(ip("172.16.0.207"));
+
+        let devices = table.finish(|_| None);
+        let me = devices.iter().find(|d| d.is_self).expect("this machine");
+        assert_eq!(me.display_name(), "172.16.0.207");
+        assert_eq!(me.category(), Category::Computers);
+    }
+}

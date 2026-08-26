@@ -25,7 +25,7 @@ export function DiscoveryProgress({
       <ul className="progress-list">
         {sources.map((source) => (
           <li key={source.method}>
-            <span className="tick">{source.status.status === "ok" ? "✓" : "!"}</span>
+            <span className={`tick ${source.status.status}`}>{tick(source)}</span>
             <span className="src">{sourceName(source.method)}</span>
             <span className="mono result">{describe(source)}</span>
           </li>
@@ -55,8 +55,20 @@ function sourceName(method: string): string {
   }
 }
 
+function tick(source: SourceQuality): string {
+  switch (source.status.status) {
+    case "ok":
+      return "✓";
+    case "refused":
+      return "⃠";
+    case "failed":
+      return "!";
+  }
+}
+
 function describe(source: SourceQuality): string {
   if (source.status.status === "failed") return source.status.reason;
+  if (source.status.status === "refused") return "blocked by macOS";
   if (source.method === "mdns") {
     return `${source.names_resolved} names · ${source.services_seen} service types`;
   }
@@ -104,15 +116,21 @@ export function describeState(quality: DiscoveryQuality, isolation: Isolation): 
 
   // Devices demonstrably exist, but their announcements are not reaching us.
   if (quality.local_network === "likely_blocked") {
+    const refused = quality.sources.find((s) => s.status.status === "refused");
     return {
       tone: "warn",
-      headline: "Devices are here, but local announcements are not reaching JRX.",
-      detail:
-        "Your computer knows about other devices, yet none of them announced " +
-        "themselves. Either this network suppresses those announcements, or " +
-        "macOS has not granted JRX local network access. macOS does not let " +
-        "JRX check which, so this is our reading of the evidence rather than " +
-        "something the system told us.",
+      headline: refused
+        ? "macOS is blocking JRX from reaching this network's devices."
+        : "Devices are here, but local announcements are not reaching JRX.",
+      detail: refused
+        ? "A discovery request was rejected before it left this computer. " +
+          "Allowing JRX under Privacy & Security → Local Network should " +
+          "restore it. Everything else on this screen is unaffected."
+        : "Your computer knows about other devices, yet none of them " +
+          "announced themselves. Either this network suppresses those " +
+          "announcements, or macOS has not granted JRX local network access. " +
+          "macOS does not let JRX check which, so this is our reading of the " +
+          "evidence rather than something the system told us.",
     };
   }
 

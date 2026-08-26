@@ -35,6 +35,11 @@ pub enum ProbeError {
 
     #[error("probe failed: {0}")]
     Failed(String),
+    /// The operating system rejected the request before it reached the
+    /// network. Kept separate from `Failed` because it identifies a
+    /// permission problem rather than a fault.
+    #[error("{0}")]
+    Refused(String),
 }
 
 pub type ProbeFuture<'a> =

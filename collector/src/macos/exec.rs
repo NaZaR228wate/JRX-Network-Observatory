@@ -56,6 +56,14 @@ pub fn dns_configuration() -> Result<String, ProbeError> {
     run(SCUTIL, &["--dns"])
 }
 
+/// This computer's name, as the user set it in System Settings.
+///
+/// Read from the OS rather than waiting for this machine to announce itself
+/// over mDNS: JRX should never fail to name the computer it is running on.
+pub fn computer_name() -> Result<String, ProbeError> {
+    Ok(run(SCUTIL, &["--get", "ComputerName"])?.trim().to_string())
+}
+
 /// Wi-Fi details. Costs roughly 300 ms on macOS 26, which is why it runs as
 /// enrichment after the identity card has already painted, never in the
 /// cold-start critical path (ARCHITECTURE.md §7.1).

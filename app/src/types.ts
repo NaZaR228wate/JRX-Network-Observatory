@@ -229,7 +229,10 @@ export interface GroupView {
 
 export type SourceStatus =
   | { status: "ok"; observations: number }
-  | { status: "failed"; reason: string };
+  | { status: "failed"; reason: string }
+  /** The OS rejected the request before it reached the network — a permission
+   *  problem, not a fault. */
+  | { status: "refused"; reason: string };
 
 export interface SourceQuality {
   method: DiscoverySource;
