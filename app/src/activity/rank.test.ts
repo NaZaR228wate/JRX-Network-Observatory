@@ -1,0 +1,138 @@
+import { describe, expect, it } from "vitest";
+import {
+  bytes,
+  displayName,
+  rate,
+  searchPrograms,
+  sortPrograms,
+} from "./rank";
+import type { ProcessActivity } from "../types";
+
+function program(over: Partial<ProcessActivity>): ProcessActivity {
+  return {
+    pid: 1,
+    process_name: "proc",
+    executable_path: null,
+    application: null,
+    name_is_truncated: false,
+    session_bytes_in: 0,
+    session_bytes_out: 0,
+    rate_in: 0,
+    rate_out: 0,
+    active_connections: 0,
+    idle_samples: 0,
+    connections: [],
+    ...over,
+  };
+}
+
+const PROGRAMS: ProcessActivity[] = [
+  program({ pid: 10, process_name: "Telegram", session_bytes_in: 1_000, session_bytes_out: 500, active_connections: 2 }),
+  program({ pid: 20, process_name: "claude", application: "Claude", session_bytes_in: 100, session_bytes_out: 9_000, active_connections: 8 }),
+  program({ pid: 30, process_name: "Spotify", session_bytes_in: 50_000, session_bytes_out: 100, active_connections: 1 }),
+];
+
+describe("ordering", () => {
+  it("ranks by total activity by default", () => {
+    expect(sortPrograms(PROGRAMS, "activity").map((p) => p.pid)).toEqual([30, 20, 10]);
+  });
+
+  it("sorts by each requested measure", () => {
+    expect(sortPrograms(PROGRAMS, "download")[0]!.pid).toBe(30);
+    expect(sortPrograms(PROGRAMS, "upload")[0]!.pid).toBe(20);
+    expect(sortPrograms(PROGRAMS, "connections")[0]!.pid).toBe(20);
+  });
+
+  // Rows that swap places every second are unreadable.
+  it("is fully determined, so equal programs never swap places", () => {
+    const tied = [
+      program({ pid: 2, session_bytes_in: 100 }),
+      program({ pid: 1, session_bytes_in: 100 }),
+    ];
+    expect(sortPrograms(tied, "activity").map((p) => p.pid)).toEqual([1, 2]);
+    expect(sortPrograms([...tied].reverse(), "activity").map((p) => p.pid)).toEqual([1, 2]);
+  });
+
+  // Session totals only grow, so a quiet second cannot demote a program.
+  it("a quiet interval does not reorder the list", () => {
+    const before = sortPrograms(PROGRAMS, "activity").map((p) => p.pid);
+    const quiet = PROGRAMS.map((p) => ({ ...p, rate_in: 0, rate_out: 0 }));
+    expect(sortPrograms(quiet, "activity").map((p) => p.pid)).toEqual(before);
+  });
+
+  it("does not mutate the input", () => {
+    const original = PROGRAMS.map((p) => p.pid);
+    sortPrograms(PROGRAMS, "upload");
+    expect(PROGRAMS.map((p) => p.pid)).toEqual(original);
+  });
+});
+
+describe("naming", () => {
+  // Only the executable's path proves which application it belongs to.
+  it("prefers a proven application name over the executable name", () => {
+    expect(displayName(PROGRAMS[1]!)).toBe("Claude");
+    expect(displayName(PROGRAMS[0]!)).toBe("Telegram");
+  });
+
+  it("falls back to the process name when no application was proven", () => {
+    expect(displayName(program({ process_name: "rapportd" }))).toBe("rapportd");
+  });
+});
+
+describe("search", () => {
+  it("finds a program by its own name", () => {
+    expect(searchPrograms(PROGRAMS, "spotify").map((p) => p.pid)).toEqual([30]);
+  });
+
+  it("finds a program by its application name", () => {
+    expect(searchPrograms(PROGRAMS, "claude").map((p) => p.pid)).toEqual([20]);
+  });
+
+  it("finds programs by the network owner they are talking to", () => {
+    const withOwner = [
+      program({
+        pid: 40,
+        process_name: "curl",
+        connections: [
+          {
+            protocol: "tcp", remote_address: "104.18.32.1", remote_port: 443,
+            state: "Established", rtt_ms: null, network_owner: "Cloudflare",
+            session_bytes_in: 1, session_bytes_out: 1, is_open: true,
+          },
+        ],
+      }),
+    ];
+    expect(searchPrograms(withOwner, "cloudflare")).toHaveLength(1);
+  });
+
+  it("returns everything for an empty query", () => {
+    expect(searchPrograms(PROGRAMS, "")).toHaveLength(3);
+    expect(searchPrograms(PROGRAMS, "   ")).toHaveLength(3);
+  });
+
+  // JRX has no website data, so there is nothing of the sort to search.
+  it("matches nothing that looks like a website", () => {
+    expect(searchPrograms(PROGRAMS, "cloudflare.com")).toHaveLength(0);
+    expect(searchPrograms(PROGRAMS, ".com")).toHaveLength(0);
+  });
+});
+
+describe("formatting", () => {
+  it("scales byte counts to something readable", () => {
+    expect(bytes(512)).toBe("512 B");
+    expect(bytes(2048)).toBe("2 KB");
+    expect(bytes(5 * 1_048_576)).toBe("5.0 MB");
+    expect(bytes(3 * 1_073_741_824)).toBe("3.00 GB");
+  });
+
+  it("scales rates the same way", () => {
+    expect(rate(0)).toBe("0 B/s");
+    expect(rate(2048)).toBe("2 KB/s");
+    expect(rate(2 * 1_048_576)).toBe("2.0 MB/s");
+  });
+
+  // A zero rate is a real measurement and must be shown as one.
+  it("shows a zero rate rather than hiding it", () => {
+    expect(rate(0)).toContain("0");
+  });
+});

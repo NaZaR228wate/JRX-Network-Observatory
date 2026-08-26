@@ -168,6 +168,90 @@ fn group_view(
     ))
 }
 
+// ---- live activity ----
+
+/// The one sampling loop.
+///
+/// The host owns collection entirely. The renderer receives typed snapshots
+/// and can neither start a sample nor compute an authoritative byte delta
+/// (ARCHITECTURE.md §5).
+#[derive(Default)]
+struct ActivityRuntime {
+    running: std::sync::atomic::AtomicBool,
+}
+
+/// Begin monitoring this Mac's activity.
+///
+/// Returns immediately. Interface throughput is available on the first tick;
+/// per-program detail arrives once `nettop` has finished starting up, which
+/// takes seconds on its first call after boot and must not block the screen.
+#[tauri::command]
+fn start_activity(app: tauri::AppHandle, state: tauri::State<'_, ActivityRuntime>) {
+    use std::sync::atomic::Ordering;
+
+    // One loop, ever. A second call while running is a no-op rather than a
+    // second stream of samples.
+    if state.running.swap(true, Ordering::SeqCst) {
+        return;
+    }
+
+    std::thread::spawn(move || {
+        let interface = jrx_collector::identity::observe()
+            .map(|identity| identity.interface)
+            .unwrap_or_default();
+
+        let monitor = jrx_collector::activity::monitor::ActivityMonitor::new(
+            jrx_collector::activity::ActivityProvider {
+                interface: Box::new(jrx_collector::activity::macos::NetstatInterfaceProvider),
+                connections: Box::new(
+                    jrx_collector::activity::macos::NettopConnectionProvider::default(),
+                ),
+            },
+            &interface,
+        );
+
+        // Pay the start-up cost off the critical path, so the first frame
+        // shows throughput instead of a spinner.
+        let warming = std::sync::Arc::new(monitor);
+        let to_warm = std::sync::Arc::clone(&warming);
+        std::thread::spawn(move || to_warm.warm());
+
+        let interval = warming.interval();
+        loop {
+            if !app
+                .state::<ActivityRuntime>()
+                .running
+                .load(Ordering::SeqCst)
+            {
+                return;
+            }
+
+            let started = std::time::Instant::now();
+            let snapshot = warming.tick();
+            if app.emit("activity://snapshot", snapshot).is_err() {
+                // The window has gone.
+                return;
+            }
+
+            // A sample that overran its slot simply gives up the remainder.
+            // Sleeping the full interval regardless would let slow ticks
+            // accumulate into a backlog.
+            let spent = started.elapsed();
+            if spent < interval {
+                std::thread::sleep(interval - spent);
+            }
+        }
+    });
+}
+
+/// Stop monitoring. The loop exits at its next tick.
+#[tauri::command]
+fn stop_activity(state: tauri::State<'_, ActivityRuntime>) {
+    state
+        .running
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+}
+
 /// Open the System Settings pane where a permission can be granted.
 ///
 /// Takes a typed `Permission`, never a URL. The renderer cannot ask the host
@@ -202,11 +286,14 @@ fn open_privacy_settings(_permission: Permission) -> Result<(), String> {
 pub fn run() {
     tauri::Builder::default()
         .manage(LastDiscovery::default())
+        .manage(ActivityRuntime::default())
         .invoke_handler(tauri::generate_handler![
             get_capabilities,
             get_network_identity,
             start_discovery,
             group_view,
+            start_activity,
+            stop_activity,
             open_privacy_settings
         ])
         .run(tauri::generate_context!())

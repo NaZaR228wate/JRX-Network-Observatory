@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { Activity } from "./activity/Activity";
 import { NetworkCard } from "./NetworkCard";
 import { Visibility } from "./Visibility";
 import { DeviceDetail } from "./topology/DeviceDetail";
@@ -7,6 +8,7 @@ import { TopologyView } from "./topology/TopologyView";
 import { searchDevices } from "./topology/search";
 import { categoryLabel } from "./topology/visual";
 import type {
+  ActivitySnapshot,
   CapabilityMatrix,
   Category,
   Device,
@@ -28,6 +30,7 @@ export interface ScreenData {
   report: DiscoveryReport | null;
   sources: SourceQuality[];
   failure: string | null;
+  activity: ActivitySnapshot | null;
   /** Resolves a group page. Live: a host command. Preview: a lookup. */
   getGroup: (category: Category, page: number, filterKey: string) => Promise<GroupView>;
 }
@@ -39,6 +42,8 @@ export interface PreviewData {
   capabilities: CapabilityMatrix;
   report: DiscoveryReport;
   group_pages: Record<string, Record<string, GroupView[]>>;
+  /** Present only in the development preview. */
+  activity?: ActivitySnapshot;
 }
 
 export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }) {
@@ -169,7 +174,10 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
         </div>
       </section>
 
-      {/* 4. WHAT JRX CAN SEE */}
+      {/* 4. THIS MAC'S OWN ACTIVITY */}
+      <Activity snapshot={state.activity} />
+
+      {/* 5. WHAT JRX CAN SEE */}
       {capabilities && <Visibility matrix={capabilities} />}
     </div>
   );
@@ -233,6 +241,7 @@ function fromPreview(data: PreviewData): ScreenData {
     report: data.report,
     sources: data.report.quality.sources,
     failure: null,
+    activity: data.activity ?? null,
     getGroup: async (category, page, filterKey) => {
       const pages = data.group_pages[category]?.[filterKey] ?? [];
       return pages[Math.min(page, Math.max(0, pages.length - 1))] ?? pages[0]!;

@@ -11,7 +11,7 @@
 
 use std::net::IpAddr;
 
-use crate::activity::{Connection, ProcessRef, Protocol, RemoteEndpoint};
+use jrx_core::activity::{Protocol, SocketObservation};
 
 /// `nettop` truncates process names to this many characters. Observed:
 /// `identityservicesd` arrives as `identityservice`, and
@@ -22,9 +22,9 @@ pub const NAME_LIMIT: usize = 15;
 ///
 /// The output is a flat list where a process row is followed by its socket
 /// rows, so ownership comes from position rather than from a column.
-pub fn parse(output: &str, resolve_name: impl Fn(u32) -> Option<String>) -> Vec<Connection> {
+pub fn parse(output: &str, resolve_path: impl Fn(u32) -> Option<String>) -> Vec<SocketObservation> {
     let mut connections = Vec::new();
-    let mut current: Option<ProcessRef> = None;
+    let mut current: Option<(u32, String, Option<String>)> = None;
 
     for line in output.lines() {
         let fields: Vec<&str> = line.split(',').collect();
@@ -37,39 +37,42 @@ pub fn parse(output: &str, resolve_name: impl Fn(u32) -> Option<String>) -> Vec<
 
         // A socket row starts with its protocol; anything else names a process.
         if let Some(socket) = parse_socket_row(&fields) {
-            if let Some(process) = &current {
-                connections.push(Connection {
-                    process: process.clone(),
+            // Ownership comes from position: a socket with no process above it
+            // is dropped rather than attributed to whatever follows.
+            if let Some((pid, reported_name, executable_path)) = &current {
+                connections.push(SocketObservation {
+                    pid: *pid,
+                    reported_name: reported_name.clone(),
+                    executable_path: executable_path.clone(),
                     ..socket
                 });
             }
             continue;
         }
 
-        current = parse_process_row(first, &resolve_name);
+        current = parse_process_row(first, &resolve_path);
     }
 
     connections
 }
 
 /// `Telegram.675` -> pid 675, reported name "Telegram".
-fn parse_process_row(field: &str, resolve: &impl Fn(u32) -> Option<String>) -> Option<ProcessRef> {
+fn parse_process_row(
+    field: &str,
+    resolve: &impl Fn(u32) -> Option<String>,
+) -> Option<(u32, String, Option<String>)> {
     let (name, pid) = field.rsplit_once('.')?;
     let pid: u32 = pid.parse().ok()?;
     if name.is_empty() {
         return None;
     }
-    Some(ProcessRef {
-        pid,
-        reported_name: name.to_string(),
-        // Resolved from the PID, because the reported name may be cut short.
-        // A failure here leaves it None; it is never reconstructed by guessing.
-        full_name: resolve(pid),
-    })
+    // The path is resolved from the PID because the reported name may be cut
+    // short. A failure leaves it None; it is never reconstructed by guessing.
+    Some((pid, name.to_string(), resolve(pid)))
 }
 
 /// `tcp4 172.16.0.207:50959<->17.242.218.132:5223` and its IPv6 form.
-fn parse_socket_row(fields: &[&str]) -> Option<Connection> {
+fn parse_socket_row(fields: &[&str]) -> Option<SocketObservation> {
     let descriptor = fields.first()?.trim();
     let (proto, rest) = descriptor.split_once(' ')?;
 
@@ -85,13 +88,7 @@ fn parse_socket_row(fields: &[&str]) -> Option<Connection> {
 
     // `*:*` is a socket with no peer. It is not an endpoint, and inventing one
     // would put a connection on screen that does not exist.
-    let remote = split_endpoint(remote, ipv6).map(|(address, port)| RemoteEndpoint {
-        address,
-        port,
-        network_owner: crate::activity::owner::network_owner(address),
-        // Never populated from the address. See the module docs.
-        hostname: None,
-    });
+    let remote = split_endpoint(remote, ipv6);
 
     let column = |name: &str| -> Option<&str> {
         // Columns follow the descriptor in the order requested on the command
@@ -104,22 +101,23 @@ fn parse_socket_row(fields: &[&str]) -> Option<Connection> {
         }
     };
 
-    Some(Connection {
+    Some(SocketObservation {
         protocol,
         local_address,
         local_port,
-        remote,
+        remote_address: remote.map(|(address, _)| address),
+        remote_port: remote.map(|(_, port)| port),
         state: column("state").filter(|s| !s.is_empty()).map(str::to_owned),
+        rtt_ms: None,
         // An unparseable count is zero, never a guess proportional to anything.
         bytes_in: column("bytes_in").and_then(|v| v.parse().ok()).unwrap_or(0),
         bytes_out: column("bytes_out")
             .and_then(|v| v.parse().ok())
             .unwrap_or(0),
-        process: ProcessRef {
-            pid: 0,
-            reported_name: String::new(),
-            full_name: None,
-        },
+        // Filled in by the caller from the process row above this one.
+        pid: 0,
+        reported_name: String::new(),
+        executable_path: None,
     })
 }
 
@@ -153,7 +151,6 @@ mod tests {
         "tcp4 127.0.0.1:8021<->*:*,Listen,,,\n",
         "apsd.378,,,,17942,81874,\n",
         "tcp4 172.16.0.207:50959<->17.242.218.132:5223,Established,17942,81874,\n",
-        "identityservice.669,,,,0,0,\n",
         "Telegram.675,,,,2367178,843131,\n",
         "tcp4 172.16.0.207:51002<->149.154.167.91:443,Established,2367178,843131,\n",
         "udp4 *:54676<->*:*,,0,636,\n",
@@ -161,150 +158,116 @@ mod tests {
         "tcp6 fe80::1.51100<->2606:4700:20::681a:1.443,Established,93,1079,\n",
     );
 
-    fn no_resolution(_: u32) -> Option<String> {
+    const WEBKIT_PATH: &str = "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking";
+
+    fn unresolved(_: u32) -> Option<String> {
         None
     }
 
-    #[test]
-    fn a_connection_is_attributed_to_the_process_it_appeared_under() {
-        let connections = parse(SAMPLE, no_resolution);
-        let telegram = connections
+    fn at(observations: &[SocketObservation], port: u16) -> &SocketObservation {
+        observations
             .iter()
-            .find(|c| c.local_port == 51002)
-            .expect("the Telegram socket");
-
-        assert_eq!(telegram.process.pid, 675);
-        assert_eq!(telegram.process.reported_name, "Telegram");
+            .find(|o| o.local_port == port)
+            .unwrap_or_else(|| panic!("no socket on port {port}"))
     }
 
-    /// Ownership comes from position in the output, so a socket appearing
-    /// before any process row must be dropped rather than attributed to
-    /// whatever happens to follow.
+    #[test]
+    fn a_socket_is_attributed_to_the_process_it_appeared_under() {
+        let observations = parse(SAMPLE, unresolved);
+        let telegram = at(&observations, 51002);
+        assert_eq!(telegram.pid, 675);
+        assert_eq!(telegram.reported_name, "Telegram");
+    }
+
+    /// Ownership comes from position, so a socket with no process above it is
+    /// dropped rather than attributed to whatever follows.
     #[test]
     fn a_socket_with_no_owning_process_is_discarded() {
         let orphan = "tcp4 10.0.0.1:1<->10.0.0.2:2,Established,5,6,\n";
-        assert!(parse(orphan, no_resolution).is_empty());
+        assert!(parse(orphan, unresolved).is_empty());
     }
 
     #[test]
-    fn reads_both_endpoints_and_the_protocol() {
-        let connections = parse(SAMPLE, no_resolution);
-        let apsd = connections
-            .iter()
-            .find(|c| c.local_port == 50959)
-            .expect("the apsd socket");
+    fn reads_both_endpoints_the_protocol_and_the_state() {
+        let observations = parse(SAMPLE, unresolved);
+        let apsd = at(&observations, 50959);
 
         assert_eq!(apsd.protocol, Protocol::Tcp);
         assert_eq!(apsd.local_address.to_string(), "172.16.0.207");
-        let remote = apsd.remote.as_ref().expect("a peer");
-        assert_eq!(remote.address.to_string(), "17.242.218.132");
-        assert_eq!(remote.port, 5223);
+        assert_eq!(
+            apsd.remote_address.map(|a| a.to_string()).as_deref(),
+            Some("17.242.218.132")
+        );
+        assert_eq!(apsd.remote_port, Some(5223));
         assert_eq!(apsd.state.as_deref(), Some("Established"));
     }
 
     /// IPv6 sockets separate the port with a dot, not a colon.
     #[test]
     fn parses_the_ipv6_endpoint_form() {
-        let connections = parse(SAMPLE, no_resolution);
-        let v6 = connections
-            .iter()
-            .find(|c| c.local_port == 51100)
-            .expect("the IPv6 socket");
-
+        let observations = parse(SAMPLE, unresolved);
+        let v6 = at(&observations, 51100);
         assert_eq!(v6.local_address.to_string(), "fe80::1");
-        assert_eq!(v6.remote.as_ref().expect("a peer").port, 443);
+        assert_eq!(v6.remote_port, Some(443));
     }
 
     /// A listening socket has no peer. Inventing one would put a connection on
     /// screen that does not exist.
     #[test]
     fn a_listening_socket_has_no_remote_endpoint() {
-        let connections = parse(SAMPLE, no_resolution);
-        let listener = connections
-            .iter()
-            .find(|c| c.local_port == 8021)
-            .expect("the listening socket");
-
-        assert!(listener.remote.is_none());
+        let observations = parse(SAMPLE, unresolved);
+        let listener = at(&observations, 8021);
+        assert!(listener.remote_address.is_none());
+        assert!(listener.remote_port.is_none());
         assert_eq!(listener.state.as_deref(), Some("Listen"));
     }
 
     #[test]
     fn byte_counts_come_from_the_tool_and_are_never_derived() {
-        let connections = parse(SAMPLE, no_resolution);
-        let telegram = connections
-            .iter()
-            .find(|c| c.local_port == 51002)
-            .expect("the Telegram socket");
-
+        let observations = parse(SAMPLE, unresolved);
+        let telegram = at(&observations, 51002);
         assert_eq!(telegram.bytes_in, 2_367_178);
         assert_eq!(telegram.bytes_out, 843_131);
     }
 
-    /// A row whose counts cannot be read reports zero. It must never be given
-    /// a number inferred from the connection existing at all.
+    /// A count that cannot be read is zero, never a number inferred from the
+    /// connection existing at all.
     #[test]
     fn an_unreadable_byte_count_becomes_zero_not_an_estimate() {
         let broken = concat!(
             "Telegram.675,,,,0,0,\n",
             "tcp4 10.0.0.1:1<->10.0.0.2:2,Established,notanumber,alsonot,\n",
         );
-        let connections = parse(broken, no_resolution);
-        assert_eq!(connections[0].bytes_in, 0);
-        assert_eq!(connections[0].bytes_out, 0);
+        let observations = parse(broken, unresolved);
+        assert_eq!(observations[0].bytes_in, 0);
+        assert_eq!(observations[0].bytes_out, 0);
     }
 
-    // ---- names ----
-
+    /// `nettop` cut `com.apple.WebKit.Networking` down to 15 characters; the
+    /// PID lookup is what recovers it.
     #[test]
-    fn the_full_process_name_is_resolved_from_the_pid() {
-        let connections = parse(SAMPLE, |pid| {
-            (pid == 842).then(|| "com.apple.WebKit.Networking".to_string())
-        });
-        let webkit = connections
-            .iter()
-            .find(|c| c.process.pid == 842)
-            .expect("the WebKit socket");
+    fn the_pid_lookup_supplies_what_the_truncated_name_lost() {
+        let observations = parse(SAMPLE, |pid| (pid == 842).then(|| WEBKIT_PATH.to_string()));
+        let webkit = at(&observations, 51100);
 
-        assert_eq!(
-            webkit.process.full_name.as_deref(),
-            Some("com.apple.WebKit.Networking")
-        );
-        assert_eq!(webkit.process.display(), "com.apple.WebKit.Networking");
-        assert!(!webkit.process.name_is_truncated());
+        assert_eq!(webkit.reported_name, "com.apple.WebKi");
+        assert_eq!(webkit.reported_name.chars().count(), NAME_LIMIT);
+        assert_eq!(webkit.executable_path.as_deref(), Some(WEBKIT_PATH));
     }
 
-    /// When the PID cannot be resolved the truncated name is shown as-is and
-    /// flagged. It is never extended by guessing what the rest might be.
+    /// When the PID cannot be resolved the truncated name stands as observed.
+    /// It is never extended by guessing what the rest might be.
     #[test]
-    fn an_unresolvable_pid_keeps_the_truncated_name_and_admits_it() {
-        let connections = parse(SAMPLE, no_resolution);
-        let webkit = connections
-            .iter()
-            .find(|c| c.process.pid == 842)
-            .expect("the WebKit socket");
-
-        assert_eq!(webkit.process.reported_name, "com.apple.WebKi");
-        assert_eq!(webkit.process.full_name, None);
-        assert!(
-            webkit.process.name_is_truncated(),
-            "a name at the tool's limit with no resolution must be flagged"
-        );
-    }
-
-    #[test]
-    fn a_short_unresolved_name_is_not_flagged_as_truncated() {
-        let connections = parse(SAMPLE, no_resolution);
-        let telegram = connections
-            .iter()
-            .find(|c| c.process.pid == 675)
-            .expect("the Telegram socket");
-        assert!(!telegram.process.name_is_truncated());
+    fn an_unresolvable_pid_leaves_the_truncated_name_alone() {
+        let observations = parse(SAMPLE, unresolved);
+        let webkit = at(&observations, 51100);
+        assert_eq!(webkit.reported_name, "com.apple.WebKi");
+        assert_eq!(webkit.executable_path, None);
     }
 
     #[test]
     fn garbage_input_yields_nothing_rather_than_panicking() {
-        assert!(parse("", no_resolution).is_empty());
-        assert!(parse("\0\0not csv at all\n???,,,\n", no_resolution).is_empty());
+        assert!(parse("", unresolved).is_empty());
+        assert!(parse("\0\0not csv at all\n???,,,\n", unresolved).is_empty());
     }
 }

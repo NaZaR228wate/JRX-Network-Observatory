@@ -300,3 +300,61 @@ export const FILTER_CHOICES: { key: string; label: string; filter: GroupFilter }
   { key: "randomised", label: "Private address", filter: { randomised: true } },
   { key: "mdns", label: "Announced itself", filter: { source: "mdns" } },
 ];
+
+// ---- activity ----
+
+export type Protocol = "tcp" | "udp";
+
+export interface ConnectionActivity {
+  protocol: Protocol;
+  remote_address: string | null;
+  remote_port: number | null;
+  state: string | null;
+  rtt_ms: number | null;
+  /** The organisation owning the address range, from published allocation
+   *  data. Not a website, not a domain, not a service. */
+  network_owner: string | null;
+  session_bytes_in: number;
+  session_bytes_out: number;
+  is_open: boolean;
+}
+
+export interface ProcessActivity {
+  pid: number;
+  process_name: string;
+  executable_path: string | null;
+  /** Only when the executable's path proves which bundle it belongs to. */
+  application: string | null;
+  name_is_truncated: boolean;
+  session_bytes_in: number;
+  session_bytes_out: number;
+  rate_in: number;
+  rate_out: number;
+  active_connections: number;
+  idle_samples: number;
+  connections: ConnectionActivity[];
+}
+
+export type ActivityHealth =
+  | { state: "full" }
+  | { state: "limited"; reason: string }
+  | { state: "initializing" }
+  | { state: "no_network" };
+
+export interface ActivitySnapshot {
+  interface: string;
+  health: ActivityHealth;
+  /** Watched by JRX since monitoring began. */
+  session_bytes_in: number;
+  session_bytes_out: number;
+  rate_in: number;
+  rate_out: number;
+  /** What the OS says the interface has carried since it started counting —
+   *  a different question from the session totals. */
+  interface_total_in: number;
+  interface_total_out: number;
+  active_connections: number;
+  programs: ProcessActivity[];
+  session_duration: { secs: number; nanos: number };
+  sample_interval: { secs: number; nanos: number };
+}

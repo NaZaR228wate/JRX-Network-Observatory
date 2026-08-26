@@ -2,6 +2,7 @@
 //!
 //! Pure logic. No OS access, no network, no Tauri. See ARCHITECTURE.md §4.
 
+pub mod activity;
 pub mod capability;
 pub mod data_class;
 pub mod declaration;

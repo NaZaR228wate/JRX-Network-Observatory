@@ -5,6 +5,7 @@ import type { UnlistenFn } from "@tauri-apps/api/event";
 import { Screen } from "./Screen";
 import type { ScreenData } from "./Screen";
 import type {
+  ActivitySnapshot,
   CapabilityMatrix,
   Category,
   Device,
@@ -28,6 +29,7 @@ export function App() {
   const [report, setReport] = useState<DiscoveryReport | null>(null);
   const [sources, setSources] = useState<SourceQuality[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
+  const [activity, setActivity] = useState<ActivitySnapshot | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -61,6 +63,10 @@ export function App() {
         setSources(event.payload.quality.sources);
       }),
       listen<string>("discovery://failed", (event) => setFailure(event.payload)),
+      // The host owns collection entirely; this only receives typed snapshots.
+      listen<ActivitySnapshot>("activity://snapshot", (event) =>
+        setActivity(event.payload),
+      ),
     ];
 
     // Discovery must not start until the listeners are actually registered.
@@ -74,6 +80,7 @@ export function App() {
           fns.forEach((fn) => fn());
           return;
         }
+        void invoke("start_activity");
         return invoke("start_discovery");
       })
       // Silence here would leave the map empty with no explanation, which is
@@ -82,6 +89,7 @@ export function App() {
 
     return () => {
       disposed = true;
+      void invoke("stop_activity");
       unlisteners.forEach((fn) => fn());
     };
   }, []);
@@ -94,6 +102,7 @@ export function App() {
     report,
     sources,
     failure,
+    activity,
     // Derived by the host from the report it already holds: no network work.
     getGroup: (category: Category, page: number, filterKey: string) =>
       invoke<GroupView>("group_view", {
