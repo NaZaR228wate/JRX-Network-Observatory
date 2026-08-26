@@ -154,3 +154,33 @@ fn test_suite_does_not_run_as_root() {
          running as root would mask a probe that silently requires elevation.",
     );
 }
+
+// ---- fixture mode must never reach a user ----
+
+/// The real guarantee is a `compile_error!` in jrx-collector: a release build
+/// with the `fixtures` feature does not compile at all. These tests guard the
+/// two ways that guarantee could be quietly bypassed — by making the feature
+/// default, or by enabling it in a build where `debug_assertions` is off.
+#[test]
+fn the_fixture_feature_is_never_on_by_default() {
+    for manifest in ["Cargo.toml", "../../collector/Cargo.toml"] {
+        let text =
+            std::fs::read_to_string(manifest).unwrap_or_else(|e| panic!("reading {manifest}: {e}"));
+
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with("default") && line.contains('=') {
+                assert!(
+                    !line.contains("fixtures"),
+                    "{manifest} enables fixtures by default: {line}"
+                );
+            }
+        }
+    }
+}
+
+// The remaining half of the guarantee is compile-time, in both jrx-collector
+// and jrx-app: `compile_error!` fires when the fixtures feature is enabled in
+// a build without debug_assertions. A runtime assertion on `cfg!` would be a
+// constant in whichever build it ran in, and a test that cannot fail is worse
+// than no test at all.

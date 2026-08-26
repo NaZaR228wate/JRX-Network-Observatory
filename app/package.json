@@ -11,7 +11,8 @@
     "dev:app": "tauri dev",
     "build:app": "tauri build",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "demo": "tauri dev --features fixtures"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

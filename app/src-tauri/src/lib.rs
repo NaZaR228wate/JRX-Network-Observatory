@@ -6,6 +6,15 @@
 
 use std::time::Instant;
 
+// Defence in depth: jrx-collector refuses to compile a release build with
+// fixtures, and so does the host. A binary that fabricates a network must not
+// be shippable through either crate.
+#[cfg(all(feature = "fixtures", not(debug_assertions)))]
+compile_error!(
+    "the `fixtures` feature must never be enabled in a release build: it would \
+     ship an application that fabricates network data"
+);
+
 use jrx_collector::registry::ALL_PROBES;
 use jrx_core::capability::{CapabilityMatrix, PermissionSet};
 use jrx_core::declaration::{Permission, Platform};
@@ -19,6 +28,11 @@ use tauri::{Emitter, Manager};
 /// cannot drift from what the collector actually does (ARCHITECTURE.md §9).
 #[tauri::command]
 fn get_capabilities() -> Result<CapabilityMatrix, String> {
+    #[cfg(feature = "fixtures")]
+    if let Some(fixture) = jrx_collector::fixtures::Fixture::from_env() {
+        return Ok(jrx_collector::fixtures::capabilities(fixture));
+    }
+
     let platform = Platform::current().ok_or("unsupported platform")?;
     Ok(CapabilityMatrix::build(
         ALL_PROBES,
@@ -49,6 +63,15 @@ struct NetworkIdentityReport {
 #[tauri::command]
 fn get_network_identity() -> Result<NetworkIdentityReport, String> {
     let started = Instant::now();
+
+    #[cfg(feature = "fixtures")]
+    if let Some(fixture) = jrx_collector::fixtures::Fixture::from_env() {
+        return Ok(NetworkIdentityReport {
+            identity: fixture.identity(),
+            observed_in_ms: 214,
+        });
+    }
+
     let identity = jrx_collector::identity::observe().map_err(|e| e.to_string())?;
 
     Ok(NetworkIdentityReport {
@@ -70,6 +93,26 @@ fn get_network_identity() -> Result<NetworkIdentityReport, String> {
 #[tauri::command]
 fn start_discovery(app: tauri::AppHandle) {
     std::thread::spawn(move || {
+        #[cfg(feature = "fixtures")]
+        if let Some(fixture) = jrx_collector::fixtures::Fixture::from_env() {
+            let report = fixture.report();
+            // Staged the same way a real run is, so the first-seconds
+            // experience being validated is the real one.
+            for source in &report.quality.sources {
+                let _ = app.emit(
+                    "discovery://stage",
+                    jrx_collector::discovery::DiscoveryStage::SourceFinished {
+                        source: source.clone(),
+                    },
+                );
+            }
+            if let Ok(mut held) = app.state::<LastDiscovery>().0.lock() {
+                *held = Some(report.clone());
+            }
+            let _ = app.emit("discovery://complete", report);
+            return;
+        }
+
         let identity = match jrx_collector::identity::observe() {
             Ok(identity) => identity,
             Err(e) => {
