@@ -378,10 +378,10 @@ The consequence is that the output format is not contractual, so:
 - **Interface-level activity keeps working when the adapter breaks.** The two
   providers are separate precisely because they fail separately.
 
-`nettop` also runs as a single long-lived child in logging mode rather than
-being spawned per sample. Spawning it once a second was measured at 77 ms to
-over 7 s per call, because each run re-establishes its connection to the
-statistics source (TECH_DECISIONS.md ADR-020).
+`nettop` is spawned once per sample and reaped immediately. Its continuous
+logging mode would give better latency but sustains 128% CPU, which is not
+something to leave running in the background (TECH_DECISIONS.md ADR-020). The
+tool's slow first call after boot is paid by a warm-up off the critical path.
 
 What genuinely does not exist at this privilege level is the *identity* of the
 far end. Reverse DNS resolved nothing for 12 of 12 live endpoints, and the only

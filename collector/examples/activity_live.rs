@@ -118,7 +118,7 @@ fn main() {
     costs.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let p95 = costs[(costs.len() as f64 * 0.95) as usize % costs.len()];
     println!(
-        "\ncollection: avg {:.1} ms  p95 {:.1} ms  ({} ticks; 1 netstat spawn each, plus one long-lived nettop)",
+        "\ncollection: avg {:.1} ms  p95 {:.1} ms  ({} ticks, 2 spawns each)",
         costs.iter().sum::<f64>() / costs.len() as f64,
         p95,
         costs.len()

@@ -296,6 +296,19 @@ pub fn run() {
             stop_activity,
             open_privacy_settings
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running JRX Observatory");
+        .build(tauri::generate_context!())
+        .expect("error while building JRX Observatory")
+        .run(|app, event| {
+            // Stop sampling when the app goes away. Each sample's child is
+            // reaped by the provider, so nothing is left behind — but the loop
+            // itself would otherwise keep spawning during shutdown.
+            if matches!(
+                event,
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit
+            ) {
+                app.state::<ActivityRuntime>()
+                    .running
+                    .store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        });
 }

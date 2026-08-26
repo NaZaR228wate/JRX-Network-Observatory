@@ -27,10 +27,10 @@ const NETTOP: &str = "/usr/bin/nettop";
 
 /// How long `nettop` is given before the sample is abandoned.
 ///
-/// Its first call after boot was measured at 6.3 s while it initialises;
-/// afterwards it settles at ~9 ms. The generous ceiling only matters for that
-/// first call, which happens off the critical path.
-const NETTOP_TIMEOUT: Duration = Duration::from_secs(10);
+/// The first call after boot was measured at 4.2 s while it initialises;
+/// afterwards it settles at ~27 ms. The generous ceiling only matters for that
+/// first call, which `warm()` makes off the critical path.
+const NETTOP_TIMEOUT: Duration = Duration::from_secs(8);
 
 // ---- interface counters ----
 
@@ -63,27 +63,25 @@ pub fn parse_counters(output: &str, interface: &str) -> Option<CounterSample> {
 
 // ---- per-process sockets ----
 
-/// Per-socket bytes, from a single long-lived `nettop`.
+/// Per-socket bytes, from one `nettop` sample at a time.
 ///
-/// Spawning `nettop` once per sample was measured on this Mac and is not
-/// viable: with a second between calls its latency ranged from 77 ms to over
-/// 7 s, because each run re-establishes its connection to the statistics
-/// source. Phase 0's 9 ms figure came from a tight loop where that connection
-/// was still warm, and was misleading about real use.
+/// The choice of invocation was made twice, and the second time on better
+/// evidence (TECH_DECISIONS.md ADR-020).
 ///
-/// So one child runs in logging mode and emits a sample per second, which is
-/// read as it arrives. Initialisation is paid once.
+/// Continuous logging mode (`-L 0`) gives stable latency but pegs a core:
+/// measured at 128% CPU sustained on this Mac, at any `-s` interval, with the
+/// output being drained. That is not something to leave running.
+///
+/// A single sample (`-L 1`) costs ~27 ms once warm, with occasional 70 ms
+/// outliers — and **4.2 s on the very first call after boot**, while the tool
+/// establishes its connection to the statistics source. That first call is
+/// paid by `warm()`, off the critical path.
 pub struct NettopConnectionProvider {
     state: Arc<StreamState>,
-    started: AtomicBool,
+    warmed: AtomicBool,
 }
 
 struct StreamState {
-    /// The most recent complete sample. `None` until the first one arrives.
-    latest: Mutex<Option<Vec<SocketObservation>>>,
-    /// Why the stream stopped, if it did.
-    failure: Mutex<Option<ProviderError>>,
-    running: AtomicBool,
     /// PID to executable path.
     ///
     /// A process's path does not change while it lives, so it is resolved
@@ -96,12 +94,9 @@ impl Default for NettopConnectionProvider {
     fn default() -> Self {
         NettopConnectionProvider {
             state: Arc::new(StreamState {
-                latest: Mutex::new(None),
-                failure: Mutex::new(None),
-                running: AtomicBool::new(false),
                 paths: Mutex::new(HashMap::new()),
             }),
-            started: AtomicBool::new(false),
+            warmed: AtomicBool::new(false),
         }
     }
 }
@@ -127,152 +122,49 @@ impl StreamState {
     }
 }
 
-impl NettopConnectionProvider {
-    /// Start the child and the thread that reads it.
-    fn start(&self) {
-        if self.started.swap(true, Ordering::SeqCst) {
-            return;
-        }
-
-        let mut child = match Command::new(NETTOP)
-            .args(["-x", "-L", "0", "-s", "1", "-J", "state,bytes_in,bytes_out"])
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()
-        {
-            Ok(child) => child,
-            Err(e) => {
-                let error = match e.kind() {
-                    std::io::ErrorKind::NotFound => ProviderError::Unavailable(NETTOP.to_string()),
-                    _ => ProviderError::Failed(NETTOP.to_string(), e.to_string()),
-                };
-                if let Ok(mut slot) = self.state.failure.lock() {
-                    *slot = Some(error);
-                }
-                return;
-            }
-        };
-
-        let Some(stdout) = child.stdout.take() else {
-            if let Ok(mut slot) = self.state.failure.lock() {
-                *slot = Some(ProviderError::Failed(
-                    NETTOP.to_string(),
-                    "no output stream".into(),
-                ));
-            }
-            return;
-        };
-
-        self.state.running.store(true, Ordering::SeqCst);
-        let state = Arc::clone(&self.state);
-
-        std::thread::spawn(move || {
-            use std::io::{BufRead, BufReader};
-
-            let reader = BufReader::new(stdout);
-            let mut block: Vec<String> = Vec::new();
-
-            for line in reader.lines() {
-                if !state.running.load(Ordering::SeqCst) {
-                    break;
-                }
-                let Ok(line) = line else { break };
-
-                // Each sample begins with the column header, so seeing one
-                // means the block before it is complete.
-                if is_header(&line) {
-                    if !block.is_empty() {
-                        publish(&state, &block);
-                        block.clear();
-                    }
-                    continue;
-                }
-                block.push(line);
-            }
-
-            // The stream ended. Say so rather than leaving the last sample to
-            // look current forever.
-            state.running.store(false, Ordering::SeqCst);
-            if let Ok(mut slot) = state.failure.lock()
-                && slot.is_none()
-            {
-                *slot = Some(ProviderError::Failed(
-                    NETTOP.to_string(),
-                    "the activity stream ended".into(),
-                ));
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-        });
-    }
-}
-
-/// Turn one completed block into observations and store it.
-fn publish(state: &StreamState, block: &[String]) {
-    let text = block.join("\n");
-    let observations = nettop::parse(&text, |pid| state.cached_path(pid));
-
-    // A block that parses to nothing means the format moved. That is not "no
-    // connections", and storing it as such would be a fabricated zero.
-    if observations.is_empty() {
-        if let Ok(mut slot) = state.failure.lock() {
-            *slot = Some(ProviderError::Unreadable(NETTOP.to_string()));
-        }
-        return;
-    }
-
-    let seen: Vec<u32> = observations.iter().map(|o| o.pid).collect();
-    state.retain_seen(&seen);
-
-    if let Ok(mut slot) = state.latest.lock() {
-        *slot = Some(observations);
-    }
-    if let Ok(mut slot) = state.failure.lock() {
-        *slot = None;
-    }
-}
-
-fn is_header(line: &str) -> bool {
-    line.starts_with("time,") || line.starts_with(",state,") || line.starts_with(",bytes_in,")
-}
-
-impl Drop for NettopConnectionProvider {
-    fn drop(&mut self) {
-        // Stop the reader; it kills and reaps the child on its way out.
-        self.state.running.store(false, Ordering::SeqCst);
-    }
-}
-
 impl ProcessConnectionProvider for NettopConnectionProvider {
     fn observe(&self) -> Result<Vec<SocketObservation>, ProviderError> {
-        self.start();
+        let output = capture(
+            NETTOP,
+            &["-x", "-L", "1", "-J", "state,bytes_in,bytes_out"],
+            NETTOP_TIMEOUT,
+        )?;
 
-        if let Ok(slot) = self.state.failure.lock()
-            && let Some(error) = slot.clone()
-        {
-            return Err(error);
-        }
-        if let Ok(slot) = self.state.latest.lock()
-            && let Some(observations) = slot.clone()
-        {
-            return Ok(observations);
+        let observations = nettop::parse(&output, |pid| self.state.cached_path(pid));
+
+        // Output that parses to nothing means the format moved, or the tool
+        // printed usage. Either way it is not "no connections", and reporting
+        // it as such would be a fabricated zero.
+        if observations.is_empty() && !has_sample_header(&output) {
+            return Err(ProviderError::Unreadable(NETTOP.to_string()));
         }
 
-        // The stream is up but has not produced its first sample yet. The
-        // monitor reads a transient failure before any success as starting up.
-        Err(ProviderError::TimedOut(
-            NETTOP.to_string(),
-            Duration::from_secs(1),
-        ))
+        let seen: Vec<u32> = observations.iter().map(|o| o.pid).collect();
+        self.state.retain_seen(&seen);
+
+        Ok(observations)
     }
 
+    /// Pay the first call's cost where nobody is waiting.
     fn warm(&self) {
-        self.start();
+        if self.warmed.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let _ = capture(NETTOP, &["-x", "-L", "1", "-J", "bytes_in"], NETTOP_TIMEOUT);
     }
 
     fn describe(&self) -> &'static str {
         "nettop"
     }
+}
+
+/// A genuine sample carries the column header, even when it lists nothing.
+fn has_sample_header(output: &str) -> bool {
+    output.lines().any(is_header)
+}
+
+fn is_header(line: &str) -> bool {
+    line.starts_with("time,") || line.starts_with(",state,") || line.starts_with(",bytes_in,")
 }
 
 /// The executable path for a PID.

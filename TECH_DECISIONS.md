@@ -496,34 +496,45 @@ out for MAC vendors.
 
 ---
 
-## ADR-020 — One long-lived `nettop`, not one per sample
+## ADR-020 — One `nettop` per sample, warmed once
 
-**Context.** M5 phase 0 measured `nettop` at ~9 ms per invocation and concluded
-that spawning it once a second was fine.
+**This decision was made twice.** The first version of this record chose a
+single long-lived `nettop -L 0` streaming child, on the strength of a
+measurement showing spawn-per-sample averaging 77–1259 ms with a p95of 7.8 s.
+That measurement was wrong: it averaged in the tool's cold first call, which
+costs seconds once and never again.
 
-**That measurement was misleading.** It came from a tight loop where the tool's
-connection to the statistics source was still warm. With a second between
-calls, real latency on this Mac ranged from 77 ms to over 7 s, because each run
-re-establishes that connection.
+Measured properly — twelve spawns at one-second intervals — the first costs
+4195 ms and every subsequent one costs 20–71 ms, typically 27 ms.
 
-**Decision.** Run one `nettop -x -L 0 -s 1` child in logging mode and read its
-samples as they arrive.
+And the streaming alternative has a cost the first measurement never looked
+for: **`nettop -L 0` sustains 128% CPU**, at any `-s` interval, with its output
+being drained. Confirmed standalone, so it is the tool's own behaviour and not
+an artefact of how JRX reads it.
 
-**Rejected — spawning per sample.** Simpler to reason about and to cancel, but
-unusable: a p95 of 7.8 s against a one-second interval is not a live view.
+**Decision.** Spawn one `nettop -L 1` per sample. Pay the first call's cost in
+`warm()`, off the critical path.
 
-**Rejected — linking NetworkStatistics directly.** Would remove the child
+| | latency | CPU |
+|---|---|---|
+| streaming `-L 0` | ~8 ms, stable | **128% of a core, sustained** |
+| per-sample `-L 1` | ~36 ms, p95 39 ms | ~3.6% of a core at 1 Hz |
+
+**Rejected — streaming.** Better latency, and unusable: a background monitor
+that permanently occupies a core is not something to ship, whatever it buys.
+
+**Rejected — linking NetworkStatistics directly.** Would avoid the child
 process entirely. It is a private API (ADR-018).
 
 **Consequences.**
-- Collection settles at ~8 ms with p95 8.1 ms, stable across runs.
-- Initialisation is paid once, off the critical path; the first sample arrives
-  ~2.5 s after start and blocks nothing.
-- Exactly one child process for the lifetime of monitoring. Verified in the
-  built app: still a single `nettop` after 90 seconds.
-- **Cost:** a long-lived child must be killed and reaped on shutdown, and a
-  stream that ends has to be reported rather than leaving the last sample
-  looking current forever. Both are handled and tested.
+- Two short-lived children per tick, each reaped by the capture helper. No
+  long-lived child means nothing to orphan if the app is killed.
+- A first sample that is slow is reported as *starting up*, not as a failure.
+- **Cost:** ~36 ms per tick rather than ~8 ms. Worth an order of magnitude less
+  CPU.
+- **The lesson worth keeping:** the first measurement compared the wrong
+  things. Latency was measured for both options; CPU was measured for neither
+  until the app was actually running.
 
 ---
 
