@@ -521,6 +521,217 @@ fn permission_limited() -> Spec {
     spec
 }
 
+/// A plausible activity snapshot, built by the real session accounting.
+///
+/// Two observations are fed through `ActivitySession` exactly as live samples
+/// are, so what the preview renders is what the production model produces —
+/// including the distinction between what JRX watched and what the interface
+/// has carried all along.
+pub fn activity(fixture: Fixture) -> jrx_core::activity::ActivitySnapshot {
+    use jrx_core::activity::session::ActivitySession;
+    use jrx_core::activity::{ActivityHealth, CounterSample, Protocol, SocketObservation};
+
+    let tick = std::time::Duration::from_secs(1);
+    let identity = fixture.identity();
+    let mut session = ActivitySession::new(&identity.interface);
+
+    session.observe_counters(
+        CounterSample {
+            rx_bytes: 6_285_700_000,
+            tx_bytes: 1_342_800_000,
+        },
+        tick,
+    );
+    session.observe_counters(
+        CounterSample {
+            rx_bytes: 6_285_742_000,
+            tx_bytes: 1_342_834_000,
+        },
+        tick,
+    );
+
+    let socket = |pid, name: &str, path: Option<&str>, port, remote: &str, bin, bout, proto| {
+        SocketObservation {
+            protocol: proto,
+            local_address: identity
+                .local_ip
+                .map_or_else(|| "192.168.1.14".parse().unwrap(), std::net::IpAddr::V4),
+            local_port: port,
+            remote_address: Some(remote.parse().unwrap()),
+            remote_port: Some(443),
+            state: Some("Established".into()),
+            rtt_ms: Some(28.0),
+            bytes_in: bin,
+            bytes_out: bout,
+            pid,
+            reported_name: name.into(),
+            executable_path: path.map(str::to_owned),
+        }
+    };
+
+    const CHATGPT: &str = "/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Versions/151.0/Helpers/Codex (Service).app/Contents/MacOS/Codex (Service)";
+    const CLAUDE: &str = "/Applications/Claude.app/Contents/MacOS/Claude";
+    const WEBKIT: &str = "/System/Library/Frameworks/WebKit.framework/Versions/A/XPCServices/com.apple.WebKit.Networking.xpc/Contents/MacOS/com.apple.WebKit.Networking";
+
+    let first = vec![
+        socket(
+            993,
+            "Codex (Service)",
+            Some(CHATGPT),
+            52001,
+            "104.18.32.1",
+            0,
+            0,
+            Protocol::Tcp,
+        ),
+        socket(
+            993,
+            "Codex (Service)",
+            Some(CHATGPT),
+            52002,
+            "104.18.32.9",
+            0,
+            0,
+            Protocol::Tcp,
+        ),
+        socket(
+            842,
+            "com.apple.WebKi",
+            Some(WEBKIT),
+            52010,
+            "17.248.150.10",
+            0,
+            0,
+            Protocol::Tcp,
+        ),
+        socket(
+            701,
+            "Claude",
+            Some(CLAUDE),
+            52020,
+            "160.79.104.10",
+            0,
+            0,
+            Protocol::Tcp,
+        ),
+        socket(
+            701,
+            "Claude",
+            Some(CLAUDE),
+            52021,
+            "160.79.104.11",
+            0,
+            0,
+            Protocol::Udp,
+        ),
+        socket(
+            686,
+            "Spotify",
+            Some("/Applications/Spotify.app/Contents/MacOS/Spotify"),
+            52030,
+            "35.186.224.25",
+            0,
+            0,
+            Protocol::Tcp,
+        ),
+        socket(
+            658,
+            "rapportd",
+            Some("/usr/libexec/rapportd"),
+            52040,
+            "17.57.144.12",
+            0,
+            0,
+            Protocol::Tcp,
+        ),
+    ];
+    session.observe_sockets(first, tick);
+
+    let second = vec![
+        socket(
+            993,
+            "Codex (Service)",
+            Some(CHATGPT),
+            52001,
+            "104.18.32.1",
+            18_300_000,
+            1_100_000,
+            Protocol::Tcp,
+        ),
+        socket(
+            993,
+            "Codex (Service)",
+            Some(CHATGPT),
+            52002,
+            "104.18.32.9",
+            2_400_000,
+            180_000,
+            Protocol::Tcp,
+        ),
+        socket(
+            842,
+            "com.apple.WebKi",
+            Some(WEBKIT),
+            52010,
+            "17.248.150.10",
+            4_100_000,
+            260_000,
+            Protocol::Tcp,
+        ),
+        socket(
+            701,
+            "Claude",
+            Some(CLAUDE),
+            52020,
+            "160.79.104.10",
+            210_000,
+            10_500_000,
+            Protocol::Tcp,
+        ),
+        socket(
+            701,
+            "Claude",
+            Some(CLAUDE),
+            52021,
+            "160.79.104.11",
+            646_000,
+            2_751_000,
+            Protocol::Udp,
+        ),
+        socket(
+            686,
+            "Spotify",
+            Some("/Applications/Spotify.app/Contents/MacOS/Spotify"),
+            52030,
+            "35.186.224.25",
+            9_800_000,
+            40_000,
+            Protocol::Tcp,
+        ),
+        socket(
+            658,
+            "rapportd",
+            Some("/usr/libexec/rapportd"),
+            52040,
+            "17.57.144.12",
+            1_200,
+            900,
+            Protocol::Tcp,
+        ),
+    ];
+    session.observe_sockets(second, tick);
+
+    session.set_health(match fixture {
+        Fixture::IsolatedNetwork => ActivityHealth::Limited {
+            reason: "nettop did not respond within 10s".into(),
+        },
+        Fixture::Hotspot => ActivityHealth::Initializing,
+        _ => ActivityHealth::Full,
+    });
+
+    session.snapshot(tick)
+}
+
 /// The permission matrix for a fixture, built by the real capability model.
 pub fn capabilities(fixture: Fixture) -> jrx_core::capability::CapabilityMatrix {
     jrx_core::capability::CapabilityMatrix::build(

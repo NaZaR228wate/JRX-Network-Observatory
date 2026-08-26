@@ -9,6 +9,7 @@
 
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Activity } from "./activity/Activity";
 import { Screen } from "./Screen";
 import type { PreviewData } from "./Screen";
 import "./styles.css";
@@ -34,9 +35,20 @@ const FIXTURES: Record<string, unknown> = {
 };
 
 function Preview() {
-  const initial = new URLSearchParams(location.search).get("f") ?? "home_wifi";
+  const params = new URLSearchParams(location.search);
+  const initial = params.get("f") ?? "home_wifi";
+  // Render one section alone, for reviewing it without scrolling past the rest.
+  const only = params.get("only");
   const [name, setName] = useState(initial);
   const data = FIXTURES[name] as PreviewData;
+
+  if (only === "activity") {
+    return (
+      <div className="shell">
+        <Activity snapshot={data.activity ?? null} />
+      </div>
+    );
+  }
 
   return (
     <>

@@ -86,6 +86,7 @@ fn main() {
         "capabilities": capabilities(fixture),
         "report": report,
         "group_pages": group_pages,
+        "activity": jrx_collector::fixtures::activity(fixture),
     });
     println!("{}", serde_json::to_string(&payload).unwrap());
 }
