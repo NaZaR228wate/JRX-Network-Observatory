@@ -68,6 +68,8 @@ export function Activity({ snapshot }: { snapshot: ActivitySnapshot | null }) {
             </div>
           </div>
 
+          <UnattributedNote snapshot={snapshot} programs={programs} />
+
           {snapshot?.health.state === "initializing" && programs.length === 0 ? (
             <p className="note preparing">Preparing program activity…</p>
           ) : programs.length === 0 ? (
@@ -95,6 +97,41 @@ export function Activity({ snapshot }: { snapshot: ActivitySnapshot | null }) {
 
       {open && <ProgramDetail program={open} />}
     </section>
+  );
+}
+
+/** Program totals can fall short of the interface total, and the reason is
+ *  worth saying rather than leaving the reader to notice a discrepancy.
+ *
+ *  A connection that opens and closes between two samples is counted by the
+ *  interface but cannot be attributed: JRX never watched its counter move, and
+ *  claiming the whole figure would also claim traffic from before it was
+ *  watching. Under-reporting is the honest side to err on. */
+function UnattributedNote({
+  snapshot,
+  programs,
+}: {
+  snapshot: ActivitySnapshot | null;
+  programs: ProcessActivity[];
+}) {
+  if (!snapshot) return null;
+
+  const attributed = programs.reduce(
+    (sum, p) => sum + p.session_bytes_in + p.session_bytes_out,
+    0,
+  );
+  const total = snapshot.session_bytes_in + snapshot.session_bytes_out;
+  // Only worth mentioning once the gap is both real and large.
+  if (total < 65_536 || attributed >= total * 0.75) return null;
+
+  return (
+    <p className="note unattributed">
+      Programs below account for {bytes(attributed)} of the{" "}
+      {bytes(total)} observed. Connections that open and close between two
+      samples are counted for this Mac but cannot be attributed to a program —
+      JRX never saw their totals change, and guessing would mean claiming
+      traffic it did not watch.
+    </p>
   );
 }
 

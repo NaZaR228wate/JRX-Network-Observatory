@@ -496,6 +496,37 @@ out for MAC vendors.
 
 ---
 
+## ADR-020 — One long-lived `nettop`, not one per sample
+
+**Context.** M5 phase 0 measured `nettop` at ~9 ms per invocation and concluded
+that spawning it once a second was fine.
+
+**That measurement was misleading.** It came from a tight loop where the tool's
+connection to the statistics source was still warm. With a second between
+calls, real latency on this Mac ranged from 77 ms to over 7 s, because each run
+re-establishes that connection.
+
+**Decision.** Run one `nettop -x -L 0 -s 1` child in logging mode and read its
+samples as they arrive.
+
+**Rejected — spawning per sample.** Simpler to reason about and to cancel, but
+unusable: a p95 of 7.8 s against a one-second interval is not a live view.
+
+**Rejected — linking NetworkStatistics directly.** Would remove the child
+process entirely. It is a private API (ADR-018).
+
+**Consequences.**
+- Collection settles at ~8 ms with p95 8.1 ms, stable across runs.
+- Initialisation is paid once, off the critical path; the first sample arrives
+  ~2.5 s after start and blocks nothing.
+- Exactly one child process for the lifetime of monitoring. Verified in the
+  built app: still a single `nettop` after 90 seconds.
+- **Cost:** a long-lived child must be killed and reaped on shutdown, and a
+  stream that ends has to be reported rather than leaving the last sample
+  looking current forever. Both are handled and tested.
+
+---
+
 ## Summary
 
 | ADR | Decision |
@@ -519,3 +550,4 @@ out for MAC vendors.
 | 017 | Fixtures are development-only, enforced at compile time |
 | 018 | Run Apple's `nettop`; never link the framework behind it |
 | 019 | No IP-to-domain mapping, at all |
+| 020 | One long-lived `nettop`, not one per sample |

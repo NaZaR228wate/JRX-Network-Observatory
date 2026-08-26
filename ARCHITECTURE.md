@@ -352,12 +352,36 @@ What is available without elevation, and what is not, stated precisely:
   attribution of those endpoints.
 - **Not available:** any historical per-destination volume beyond what the OS
   keeps, and any view of another device's traffic.
-- **Corrected in M5 phase 0:** this section previously claimed per-application
+- **Corrected in M5:** this section previously claimed per-application
   bandwidth requires administrator access. On macOS that is false.
   `/usr/bin/nettop` reports bytes per socket with the owning process, system
-  wide, unprivileged, at ~9 ms per sample. Measured, not assumed — see
+  wide, unprivileged. Measured, not assumed — see
   [docs/M5_PHASE0_FEASIBILITY.md](docs/M5_PHASE0_FEASIBILITY.md). The Windows
   equivalent remains unproven.
+
+### `nettop` is a tool, not an API
+
+This matters enough to state plainly.
+
+**JRX does not link Apple's private `NetworkStatistics` framework.** The macOS
+provider runs the shipped `/usr/bin/nettop` executable and parses its output.
+Linking the framework directly would be a private API: undocumented, free to
+change between OS versions, and grounds for App Store rejection.
+
+The consequence is that the output format is not contractual, so:
+
+- All parsing is isolated behind `InterfaceActivityProvider` /
+  `ProcessConnectionProvider`. Nothing else in JRX reads `nettop`.
+- A format change degrades rather than propagates. Output that parses to
+  nothing is treated as unreadable, never as "no connections" — a fabricated
+  zero is worse than an admitted gap.
+- **Interface-level activity keeps working when the adapter breaks.** The two
+  providers are separate precisely because they fail separately.
+
+`nettop` also runs as a single long-lived child in logging mode rather than
+being spawned per sample. Spawning it once a second was measured at 77 ms to
+over 7 s per call, because each run re-establishes its connection to the
+statistics source (TECH_DECISIONS.md ADR-020).
 
 What genuinely does not exist at this privilege level is the *identity* of the
 far end. Reverse DNS resolved nothing for 12 of 12 live endpoints, and the only

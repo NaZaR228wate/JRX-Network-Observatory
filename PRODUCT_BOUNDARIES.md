@@ -10,6 +10,9 @@ not a description of current limitations.
 
 ## JRX v1 does
 
+- **Show this Mac's own live network activity** — how much data is moving,
+  which programs are moving it, and which network each connection goes to when
+  published allocation data says so.
 - **Identify the current network connection** — Wi-Fi, Ethernet, a phone
   hotspot, or honestly "unknown" when the evidence does not say. A VPN is
   reported as a route the traffic takes, never as the connection itself.
@@ -77,6 +80,24 @@ answer:
 | 5 | What kinds of devices are here? | The category counts, before the map |
 | 6 | What does JRX know versus infer? | Any device panel, in separate sections |
 | 7 | What can JRX not see here, and why? | "What JRX can see", at the foot of the screen |
+
+### What Activity shows, and what it refuses to
+
+| Shown | Because |
+|---|---|
+| Live download and upload rate | Interface counters, measured |
+| Bytes observed this session | Accumulated from deltas while JRX watched |
+| Which programs are talking, and how much | Per-socket counters with the owning process |
+| Which application a program belongs to | Only where the executable's path proves it |
+| Remote address, port, protocol, state, RTT | Reported by the OS |
+| Network owner | Published allocation ranges, offline |
+
+| Refused | Because |
+|---|---|
+| The website a connection represents | JRX cannot know it without watching DNS, which is refused |
+| A hostname for a remote address | Reverse DNS answered for none of 12 live endpoints, and would not be proof anyway |
+| A service name from a port or an owner | Both would be guesses |
+| Any other device's traffic | Impossible unprivileged, and a stated boundary |
 
 Questions 1, 2, 4 and 5 must be answerable **without scrolling** at
 1280×720. Questions 3 and 7 must be answerable without clicking anything.

@@ -540,3 +540,5 @@ body {
   .program button { grid-template-columns: minmax(0, 1fr) auto; }
   .program-conns { display: none; }
 }
+
+.unattributed { margin: 12px 0 0; max-width: 84ch; }
