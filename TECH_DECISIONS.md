@@ -538,6 +538,54 @@ process entirely. It is a private API (ADR-018).
 
 ---
 
+## ADR-021 — Local persistence for recognition, with a mobile-ready split
+
+**Context.** JRX shows a truthful snapshot but remembers nothing: every launch
+is amnesiac. The two things that make it an *observatory* rather than a live
+monitor — "you have been on this network before" and "this device is new here" —
+require state that survives a restart. It must not compromise the local-first,
+no-cloud, honesty principles, and it should not have to be rebuilt for a future
+iOS client (ARCHITECTURE.md §17).
+
+**Decision.** A local SQLite store (via `rusqlite`, SQLite bundled), holding
+**one-way digests** of network and device keys — never SSIDs, BSSIDs, MACs, or
+addresses. The recognition logic that turns a live observation into a key, and a
+stored match into an honest verdict, lives in pure `core` (`core::history`); the
+SQLite adapter is a thin platform boundary the `core` logic never sees. Records
+are kept for a bounded window (recognition: ~90 days since last seen) and
+`clear_all_data()` erases the store verifiably.
+
+**Rejected — no persistence.** Keeps the code simpler but leaves JRX unable to
+answer its two most valuable questions; the product name would be a promise it
+does not keep.
+
+**Rejected — storing readable identities (SSID/BSSID/MAC in plain columns).**
+A local, readable log of every network you have joined and every device you have
+seen is exactly the dossier JRX exists not to build. Digesting the keys means
+the store can *recognise* a network on return without *recording* what it is.
+
+**Rejected — cloud sync / a hosted history.** Violates local-first and the
+no-account, no-backend stance (ADR-004). Recognition is only ever needed on the
+machine that observed it.
+
+**Consequences.**
+- `core::history` is pure and fully unit-tested offline, and is the exact logic
+  a future iOS app reuses; only the SQLite adapter is rewritten per platform.
+- A randomised MAC is never persisted as a device identity, so JRX never reports
+  a rotating phone as a "new device" (ADR-008, and `history::device_standing`).
+- A network match carries its evidence strength: a hardware match (BSSID or
+  gateway MAC) is confident; an addressing-only match is reported as *likely*,
+  because many networks share `192.168.1.0/24`.
+- **Honest limitation:** the digest is a stable fingerprint (FNV-1a), not a
+  cryptographic commitment. It keeps a casual reader of the local database from
+  seeing a plaintext history; it is not proof against a determined attacker who
+  already has the file and brute-forces a 48-bit address. The database is
+  local-only and never transmitted, which is the boundary that matters.
+- The `rusqlite` dependency is added when the storage adapter lands, not by this
+  record.
+
+---
+
 ## Summary
 
 | ADR | Decision |
@@ -562,3 +610,4 @@ process entirely. It is a private API (ADR-018).
 | 018 | Run Apple's `nettop`; never link the framework behind it |
 | 019 | No IP-to-domain mapping, at all |
 | 020 | One `nettop` per sample, warmed once; not a long-lived streaming child |
+| 021 | Local SQLite for recognition; digest-only, core/adapter split for mobile |
