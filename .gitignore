@@ -10,3 +10,7 @@ target/
 
 # Tauri build-time generated schemas
 app/src-tauri/gen/schemas/
+
+# Cowork validation scratch (not product source)
+_validation/
+_to_delete/

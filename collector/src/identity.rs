@@ -4,7 +4,9 @@
 //! passes the parsed data to `jrx_core`. It contains no interpretation of its
 //! own, which is what keeps every rule fixture-testable.
 
-use jrx_core::network::{NetworkIdentity, WifiStatus};
+use jrx_core::network::NetworkIdentity;
+#[cfg(target_os = "macos")]
+use jrx_core::network::WifiStatus;
 
 use crate::probe::ProbeError;
 

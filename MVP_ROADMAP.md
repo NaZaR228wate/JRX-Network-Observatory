@@ -175,19 +175,36 @@ validation.
 
 ---
 
-### M5 · Traffic — 3 days
+### M5 · My Device + Network Activity — complete
 
-- `ifcounters` probe; throughput from counter deltas
-- Live throughput strip with sparkline
-- `sockets` probe → active remote endpoints with owning process
-- Reverse-DNS and bundled-ASN attribution → "connected to Cloudflare, Google, AWS"
+The scope changed once phase 0 measured what is actually available. The plan
+above assumed per-application bandwidth was impossible unprivileged and that
+endpoints would be named by reverse DNS and ASN. Both assumptions were wrong,
+in opposite directions, and the milestone was rebuilt around the measurements
+(see docs/M5_PHASE0_FEASIBILITY.md and docs/M5_REPORT.md).
 
-**Explicitly not built:** per-destination byte counts and per-application bandwidth.
-They do not exist at this privilege level (ARCHITECTURE §8.4). The UI must not imply
-they do, and the limitation appears as a Visibility Panel row.
+- Interface throughput from `netstat -ib` counter deltas — available on the
+  first frame, never blocked by the slower provider
+- Per-program activity from `/usr/bin/nettop`, unprivileged: which programs are
+  talking, session bytes each, active connection count, per-connection remote
+  address / port / protocol / state / owner
+- A session accounting model that survives a socket closing, a counter reset,
+  an interface switch and a reused PID — totals are *observed since JRX opened*,
+  never since boot
+- Offline network-owner attribution from bundled published ranges; **no**
+  reverse DNS, **no** ASN, **no** IP-to-domain (ADR-019)
+- Two providers that fail separately, four honest health states, and an
+  under-reporting note when program totals fall short of the interface total
 
-**Exit:** throughput responds visibly to a large download. The endpoint list is
-readable by a non-expert. Nothing on screen implies a number we cannot measure.
+**Corrected assumption:** per-application bandwidth is *not* impossible on
+macOS (the original §5 out-of-scope entry and ARCHITECTURE §8.4 both said so).
+`nettop` provides it unprivileged. What is genuinely unavailable is the far
+end's *identity* — domain, service — and that is refused, not merely missing.
+
+**Exit:** on the real Mac, throughput responds to a live download, the program
+list is readable by a non-expert, and nothing on screen implies a website,
+domain or service. Validated end-to-end in the bundled Tauri app, not only in
+preview.
 
 ---
 
@@ -231,7 +248,7 @@ platform differences.
 | M2 Visibility Panel | 4 | 10 | *risk retired* |
 | M3 Passive Discovery | 5 | 15 | |
 | M4 Radial Topology | 5 | 20 | **DEMO-READY — week 4** |
-| M5 Traffic | 3 | 23 | |
+| M5 My Device + Network Activity | 3 | 23 | **complete** |
 | M6 Persistence & Polish | 3 | 26 | |
 | M7 Windows Parity | 5 | 31 | **v1 COMPLETE — week 6.2** |
 
@@ -282,8 +299,8 @@ Postponing these is a decision, not an omission.
 | Code signing, notarization, auto-update | ADR-013 — ~$500/yr before there is anything to distribute |
 | Mobile (Android, iOS) | ADR-015 — a companion with a smaller promise, not a port |
 | Privileged daemon / background collection | ADR-002, ADR-003 — no probe needs it |
-| GeoIP maps | MaxMind licensing; bundled ASN attribution covers the need |
-| Per-application bandwidth | Requires admin. Not deferred — **impossible** under ADR-002 |
+| GeoIP maps | MaxMind licensing; offline network-owner attribution covers the need (not ASN — ADR-019) |
+| ~~Per-application bandwidth~~ | ~~Requires admin~~ — **shipped in M5**; `nettop` provides it unprivileged (phase 0 overturned this) |
 | Alerting and notifications | Needs a trustworthy baseline first; premature |
 | Reporting and export | No demonstrated need yet |
 | Linux support | Third platform; no current requirement |

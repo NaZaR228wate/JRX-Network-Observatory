@@ -348,8 +348,9 @@ than admitting.
 What is available without elevation, and what is not, stated precisely:
 
 - **Available:** per-interface throughput from counter deltas (accurate); the set
-  of active remote endpoints with owning process; reverse-DNS and bundled-ASN
-  attribution of those endpoints.
+  of active remote endpoints with owning process; and offline network-owner
+  attribution of those endpoints from bundled published ranges. Not reverse
+  DNS and not ASN — both are refused (ADR-019).
 - **Not available:** any historical per-destination volume beyond what the OS
   keeps, and any view of another device's traffic.
 - **Corrected in M5:** this section previously claimed per-application

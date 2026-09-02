@@ -561,4 +561,4 @@ process entirely. It is a private API (ADR-018).
 | 017 | Fixtures are development-only, enforced at compile time |
 | 018 | Run Apple's `nettop`; never link the framework behind it |
 | 019 | No IP-to-domain mapping, at all |
-| 020 | One long-lived `nettop`, not one per sample |
+| 020 | One `nettop` per sample, warmed once; not a long-lived streaming child |

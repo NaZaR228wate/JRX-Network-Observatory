@@ -89,7 +89,7 @@ answer:
 | Bytes observed this session | Accumulated from deltas while JRX watched |
 | Which programs are talking, and how much | Per-socket counters with the owning process |
 | Which application a program belongs to | Only where the executable's path proves it |
-| Remote address, port, protocol, state, RTT | Reported by the OS |
+| Remote address, port, protocol, connection state | Reported by the OS |
 | Network owner | Published allocation ranges, offline |
 
 | Refused | Because |
