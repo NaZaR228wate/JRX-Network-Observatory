@@ -241,3 +241,66 @@ mod application_tests {
         assert_eq!(application_name(""), None);
     }
 }
+
+#[cfg(test)]
+mod owner_tests {
+    use super::*;
+    use std::net::Ipv6Addr;
+
+    fn owner(a: u8, b: u8, c: u8, d: u8) -> Option<&'static str> {
+        network_owner(IpAddr::V4(Ipv4Addr::new(a, b, c, d)))
+    }
+
+    #[test]
+    fn a_published_range_names_its_owner() {
+        assert_eq!(owner(104, 18, 12, 34), Some("Cloudflare"));
+        assert_eq!(owner(17, 253, 144, 10), Some("Apple"));
+        assert_eq!(owner(8, 8, 8, 8), Some("Google"));
+        assert_eq!(owner(34, 149, 66, 163), Some("Google Cloud"));
+        assert_eq!(owner(151, 101, 1, 1), Some("Fastly"));
+    }
+
+    /// The honesty rule: an address in no published range stays unidentified,
+    /// never a fabricated owner.
+    #[test]
+    fn an_unmatched_address_is_unidentified() {
+        // 198.51.100.0/24 is TEST-NET-2, assigned to nobody in the table.
+        assert_eq!(owner(198, 51, 100, 7), None);
+        assert_eq!(owner(1, 2, 3, 4), None);
+    }
+
+    #[test]
+    fn an_ipv6_address_is_unidentified_by_this_v4_table() {
+        assert_eq!(
+            network_owner(IpAddr::V6("2606:4700::1".parse().unwrap())),
+            None
+        );
+    }
+
+    /// Range membership is exact at the boundaries: the last address inside a
+    /// block matches, the first address past it does not.
+    #[test]
+    fn range_membership_holds_at_the_boundary() {
+        // 104.16.0.0/13 spans 104.16.0.0 ..= 104.23.255.255.
+        assert_eq!(owner(104, 16, 0, 0), Some("Cloudflare"));
+        assert_eq!(owner(104, 23, 255, 255), Some("Cloudflare"));
+        assert_eq!(owner(104, 24, 0, 0), None, "one past the end is outside");
+    }
+
+    #[test]
+    fn local_addresses_are_not_internet_destinations() {
+        assert!(is_local(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))));
+        assert!(is_local(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+        assert!(is_local(IpAddr::V4(Ipv4Addr::new(169, 254, 3, 4))));
+        assert!(is_local(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+        assert!(is_local(IpAddr::V6("fe80::1".parse().unwrap())));
+    }
+
+    #[test]
+    fn public_addresses_are_internet_destinations() {
+        assert!(!is_local(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!is_local(IpAddr::V4(Ipv4Addr::new(104, 18, 0, 1))));
+        assert!(!is_local(IpAddr::V6("2606:4700::1".parse().unwrap())));
+    }
+}
+
