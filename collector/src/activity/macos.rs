@@ -290,6 +290,10 @@ mod tests {
         assert!(!error.is_transient(), "a missing tool stays missing");
     }
 
+    // Forces a hang with a Unix command (/bin/sleep). The timeout path in
+    // `capture` is platform-agnostic, so exercising it on Unix is enough;
+    // Windows has no /bin/sleep, where it would report Unavailable instead.
+    #[cfg(unix)]
     #[test]
     fn a_hung_tool_times_out_and_is_transient() {
         let error = capture("/bin/sleep", &["30"], Duration::from_millis(120))
