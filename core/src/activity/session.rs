@@ -473,7 +473,11 @@ mod tests {
         s.observe_counters(counters(1_002_000, 500_500), TICK);
         // rx fell back to a fresh baseline while tx kept climbing.
         s.observe_counters(counters(5_000, 900_000), TICK);
-        assert_eq!(s.session_bytes_in(), 2_000, "the reset direction adds nothing");
+        assert_eq!(
+            s.session_bytes_in(),
+            2_000,
+            "the reset direction adds nothing"
+        );
         assert_eq!(
             s.session_bytes_out(),
             500,

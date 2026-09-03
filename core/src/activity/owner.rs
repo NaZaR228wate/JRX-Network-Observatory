@@ -303,4 +303,3 @@ mod owner_tests {
         assert!(!is_local(IpAddr::V6("2606:4700::1".parse().unwrap())));
     }
 }
-
