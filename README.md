@@ -1,5 +1,7 @@
 # JRX Network Observatory
 
+[![CI](https://github.com/NaZaR228wate/JRX-Network-Observatory/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/NaZaR228wate/JRX-Network-Observatory/actions/workflows/ci.yml)
+
 **The network map that tells you what it knows — and what it doesn't.**
 
 JRX is a local-first desktop app that makes your own network legible. It shows
@@ -15,6 +17,16 @@ and a mobile companion later.
 > Status: macOS, in active development. Everything described below runs; claims
 > here are held to the same evidence standard as the code (see
 > [Honesty & testing](#honesty--testing)).
+
+---
+
+## A look
+
+Shown on JRX's built-in **demo network** — deterministic fixture data, not a real network.
+
+![JRX showing the Wi-Fi you are connected to, that you have been on this network before, and a map of the devices around you](docs/screenshots/01-network.png)
+
+![JRX's hierarchical topology map: the router at the centre, this Mac highlighted, every other device grouped by kind and bounded so a busy network stays legible](docs/screenshots/02-topology.png)
 
 ---
 
