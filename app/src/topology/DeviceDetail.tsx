@@ -23,9 +23,11 @@ const EVIDENCE_LABEL: Record<Evidence["kind"], string> = {
  *  performs no network work. */
 export function DeviceDetail({
   device,
+  isNew = false,
   onClose,
 }: {
   device: Device;
+  isNew?: boolean;
   onClose: () => void;
 }) {
   const { facts, inference } = device;
@@ -51,6 +53,12 @@ export function DeviceDetail({
           ✕
         </button>
       </div>
+
+      {isNew && (
+        <p className="detail-new">
+          New on this network — JRX has not seen this device here before.
+        </p>
+      )}
 
       {unidentified && (
         <p className="unidentified-note">

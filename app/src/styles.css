@@ -549,3 +549,12 @@ body {
 .recognition.likely, .recognition.first { color: var(--muted); }
 .recognition .note { display: inline; margin: 0; }
 .new-here { color: var(--accent); }
+
+/* New-device recognition marker + erase control (ADR-021) */
+.new-ring { fill: none; stroke: var(--accent); stroke-width: 1.5; opacity: 0.85; }
+.detail-new { color: var(--accent); font-size: 13px; margin: 4px 0 12px; }
+.memory-footer { margin: 34px 0 10px; padding-top: 16px; border-top: 1px solid var(--line); }
+.memory-footer .note { max-width: 640px; }
+.linklike { background: none; border: none; color: var(--accent); cursor: pointer; padding: 0; font: inherit; }
+.linklike.danger { color: var(--warn); }
+.forget-confirm { font-size: 13px; color: var(--muted); }

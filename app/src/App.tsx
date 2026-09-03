@@ -109,6 +109,10 @@ export function App() {
     failure,
     activity,
     recognition,
+    forget: async () => {
+      await invoke("clear_recognition");
+      setRecognition(null);
+    },
     // Derived by the host from the report it already holds: no network work.
     getGroup: (category: Category, page: number, filterKey: string) =>
       invoke<GroupView>("group_view", {

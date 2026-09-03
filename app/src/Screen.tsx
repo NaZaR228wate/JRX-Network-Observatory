@@ -35,6 +35,8 @@ export interface ScreenData {
   recognition: RecognitionUpdate | null;
   /** Resolves a group page. Live: a host command. Preview: a lookup. */
   getGroup: (category: Category, page: number, filterKey: string) => Promise<GroupView>;
+  /** Erase everything JRX has remembered. Live: a host command. */
+  forget: () => Promise<void>;
 }
 
 /** Shape of a dumped fixture payload. */
@@ -65,6 +67,18 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
       setGroup(await state.getGroup(category, page, key));
     },
     [state],
+  );
+
+  // Only surface "new" once the network itself is recognised: on a first
+  // visit every device is trivially new, which would be noise, not signal.
+  const newDevices = useMemo(
+    () =>
+      new Set(
+        recognition?.network && recognition.network !== "first_time"
+          ? recognition.new_device_ids
+          : [],
+      ),
+    [recognition],
   );
 
   const matched = useMemo(() => searchDevices(devices, query), [devices, query]);
@@ -161,6 +175,7 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
                 setFilterKey("all");
               }}
               onSelectDevice={onSelect}
+              newDevices={newDevices}
               filterKey={filterKey}
               onFilter={(key) => openCategory && void openGroup(openCategory, 0, key)}
               onPage={(page) => openCategory && void openGroup(openCategory, page, filterKey)}
@@ -171,7 +186,11 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
 
           <div className="topo-side">
             {selectedDevice ? (
-              <DeviceDetail device={selectedDevice} onClose={() => setSelected(null)} />
+              <DeviceDetail
+                device={selectedDevice}
+                isNew={newDevices.has(selectedDevice.id)}
+                onClose={() => setSelected(null)}
+              />
             ) : (
               <>
                 {report && (
@@ -192,6 +211,9 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
 
       {/* 5. WHAT JRX CAN SEE */}
       {capabilities && <Visibility matrix={capabilities} />}
+
+      {/* 6. WHAT JRX REMEMBERS, AND HOW TO ERASE IT */}
+      <MemoryFooter forget={state.forget} />
     </div>
   );
 }
@@ -244,6 +266,46 @@ function Brand() {
   );
 }
 
+/** What JRX keeps between runs, and a real way to erase it. The store holds
+ *  one-way fingerprints of networks and devices, never their names or
+ *  addresses, and never leaves this Mac (ADR-021). */
+function MemoryFooter({ forget }: { forget: () => Promise<void> }) {
+  const [stage, setStage] = useState<"idle" | "confirm" | "done">("idle");
+
+  return (
+    <footer className="memory-footer">
+      <p className="note">
+        JRX remembers only on this Mac — one-way fingerprints of the networks and
+        devices it has seen, never their names or addresses, so it can tell you
+        when something is new. Nothing is sent anywhere.
+      </p>
+      {stage === "done" ? (
+        <p className="note">JRX has forgotten every network and device it had remembered.</p>
+      ) : stage === "idle" ? (
+        <button className="linklike" onClick={() => setStage("confirm")}>
+          Forget what JRX has learned
+        </button>
+      ) : (
+        <span className="forget-confirm">
+          Erase all remembered networks and devices?{" "}
+          <button
+            className="linklike danger"
+            onClick={async () => {
+              await forget();
+              setStage("done");
+            }}
+          >
+            Forget everything
+          </button>{" "}
+          <button className="linklike" onClick={() => setStage("idle")}>
+            Cancel
+          </button>
+        </span>
+      )}
+    </footer>
+  );
+}
+
 /** Adapt a dumped fixture into the same shape the live host provides. */
 function fromPreview(data: PreviewData): ScreenData {
   return {
@@ -256,6 +318,7 @@ function fromPreview(data: PreviewData): ScreenData {
     failure: null,
     activity: data.activity ?? null,
     recognition: null,
+    forget: async () => {},
     getGroup: async (category, page, filterKey) => {
       const pages = data.group_pages[category]?.[filterKey] ?? [];
       return pages[Math.min(page, Math.max(0, pages.length - 1))] ?? pages[0]!;

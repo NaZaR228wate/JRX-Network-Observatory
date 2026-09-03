@@ -27,6 +27,8 @@ interface Props {
   onPage: (page: number) => void;
   filterKey?: string;
   onFilter?: (key: string) => void;
+  /** Devices new on this network since last time (empty unless returning). */
+  newDevices?: Set<string>;
 }
 
 export function TopologyView(props: Props) {
@@ -196,7 +198,13 @@ function GroupNode({
 
 const LABEL_BUDGET = 12;
 
-function GroupLevel({ group, onSelectDevice, highlighted, searching }: Props & { group: GroupView }) {
+function GroupLevel({
+  group,
+  onSelectDevice,
+  highlighted,
+  searching,
+  newDevices,
+}: Props & { group: GroupView }) {
   const points = useMemo(
     () => placeMembers(CENTER, group.devices.length, 116, 66),
     [group.devices.length],
@@ -235,6 +243,7 @@ function GroupLevel({ group, onSelectDevice, highlighted, searching }: Props & {
               label={node.display_name}
               emphasis={node.is_self ? "self" : "device"}
               alwaysLabel={alwaysLabel}
+              isNew={newDevices?.has(node.device_id) ?? false}
               onSelect={() => onSelectDevice(node)}
             />
           </g>
@@ -326,6 +335,7 @@ function DeviceNode({
   label,
   emphasis,
   alwaysLabel = false,
+  isNew = false,
   onSelect,
 }: {
   node: TopologyNode;
@@ -335,6 +345,7 @@ function DeviceNode({
   label: string;
   emphasis: "router" | "self" | "device";
   alwaysLabel?: boolean;
+  isNew?: boolean;
   onSelect: () => void;
 }) {
   const [hover, setHover] = useState(false);
@@ -346,13 +357,14 @@ function DeviceNode({
       transform={`translate(${x} ${y})`}
       role="button"
       tabIndex={0}
-      aria-label={`${label}. ${node.rationale}`}
+      aria-label={`${label}. ${node.rationale}${isNew ? ". New on this network since last time" : ""}`}
       onClick={onSelect}
       onKeyDown={(e) => (e.key === "Enter" || e.key === " ") && onSelect()}
       onMouseEnter={() => setHover(true)}
       onMouseLeave={() => setHover(false)}
     >
       {emphasis === "self" && <circle r={radius + 7} className="halo" />}
+      {isNew && <circle r={radius + 4} className="new-ring" />}
       <circle r={radius} className="node-body" />
       {emphasis !== "device" && (
         <text className="node-sub" dy="0.35em">
