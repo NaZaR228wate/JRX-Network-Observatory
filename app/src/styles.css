@@ -542,3 +542,10 @@ body {
 }
 
 .unattributed { margin: 12px 0 0; max-width: 84ch; }
+
+/* Recognition (ADR-021) */
+.recognition { font-size: 13px; margin: 8px 0 0; }
+.recognition.known { color: var(--accent); }
+.recognition.likely, .recognition.first { color: var(--muted); }
+.recognition .note { display: inline; margin: 0; }
+.new-here { color: var(--accent); }

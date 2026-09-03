@@ -358,3 +358,15 @@ export interface ActivitySnapshot {
   session_duration: { secs: number; nanos: number };
   sample_interval: { secs: number; nanos: number };
 }
+
+// ---- recognition (ADR-021) ----
+export type NetworkRecognition = "first_time" | "returning" | "returning_likely";
+
+export interface RecognitionUpdate {
+  network: NetworkRecognition | null;
+  network_first_seen_unix: number | null;
+  new_device_ids: string[];
+  known_here: number;
+  new_here: number;
+  unstable: number;
+}

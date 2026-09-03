@@ -15,6 +15,7 @@ import type {
   DiscoveryReport,
   GroupView,
   NetworkIdentityReport,
+  RecognitionUpdate,
   SourceQuality,
   TopologyNode,
   TopologyOverview,
@@ -31,6 +32,7 @@ export interface ScreenData {
   sources: SourceQuality[];
   failure: string | null;
   activity: ActivitySnapshot | null;
+  recognition: RecognitionUpdate | null;
   /** Resolves a group page. Live: a host command. Preview: a lookup. */
   getGroup: (category: Category, page: number, filterKey: string) => Promise<GroupView>;
 }
@@ -48,7 +50,7 @@ export interface PreviewData {
 
 export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }) {
   const state: ScreenData = live ?? fromPreview(data!);
-  const { identity, capabilities, overview, devices, report } = state;
+  const { identity, capabilities, overview, devices, report, recognition } = state;
 
   const [openCategory, setOpenCategory] = useState<Category | null>(null);
   const [group, setGroup] = useState<GroupView | null>(null);
@@ -93,6 +95,7 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
       {identity ? (
         <NetworkCard
           report={identity}
+          recognition={recognition}
           // From the identity, not from discovery: this address is known in
           // the first few hundred milliseconds, and showing "unknown" while
           // discovery runs would be wrong for four seconds.
@@ -112,6 +115,16 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
                 ? `${overview.total} observed · your router is in the centre`
                 : "Reading what your computer already knows…"}
             </p>
+            {overview &&
+              recognition?.network &&
+              recognition.network !== "first_time" &&
+              recognition.new_here > 0 && (
+                <p className="note new-here">
+                  {recognition.new_here}{" "}
+                  {recognition.new_here === 1 ? "device you have" : "devices you have"} not
+                  seen on this network before
+                </p>
+              )}
           </div>
           <input
             className="search"
@@ -242,6 +255,7 @@ function fromPreview(data: PreviewData): ScreenData {
     sources: data.report.quality.sources,
     failure: null,
     activity: data.activity ?? null,
+    recognition: null,
     getGroup: async (category, page, filterKey) => {
       const pages = data.group_pages[category]?.[filterKey] ?? [];
       return pages[Math.min(page, Math.max(0, pages.length - 1))] ?? pages[0]!;

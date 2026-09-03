@@ -109,6 +109,9 @@ fn start_discovery(app: tauri::AppHandle) {
             if let Ok(mut held) = app.state::<LastDiscovery>().0.lock() {
                 *held = Some(report.clone());
             }
+            if let Ok(store) = jrx_collector::store::RecognitionStore::in_memory() {
+                emit_recognition(&app, &store, &fixture.identity(), &report);
+            }
             let _ = app.emit("discovery://complete", report);
             return;
         }
@@ -129,6 +132,15 @@ fn start_discovery(app: tauri::AppHandle) {
             Ok(report) => {
                 if let Ok(mut held) = app.state::<LastDiscovery>().0.lock() {
                     *held = Some(report.clone());
+                }
+                // Recognition is computed here, before the report is handed to
+                // the event bus, so it can borrow both the identity and the
+                // report. Storage trouble is swallowed: it must never take the
+                // map down with it.
+                if let Some(path) = recognition_db_path(&app)
+                    && let Ok(store) = jrx_collector::store::RecognitionStore::open(path)
+                {
+                    emit_recognition(&app, &store, &identity, &report);
                 }
                 let _ = app.emit("discovery://complete", report);
             }
@@ -282,6 +294,132 @@ fn open_privacy_settings(_permission: Permission) -> Result<(), String> {
     Err("not supported on this platform".to_string())
 }
 
+/// What JRX remembers about this network and the devices on it (ADR-021).
+///
+/// `network` is `None` when there was no stable signal to recognise the network
+/// by — reported as such rather than guessed.
+#[derive(Clone, Serialize)]
+struct RecognitionUpdate {
+    network: Option<jrx_core::history::NetworkRecognition>,
+    network_first_seen_unix: Option<i64>,
+    /// Devices with a stable identity not seen on this network before. Only
+    /// meaningful once the network itself is recognised: on a first visit every
+    /// device is trivially new, so the UI suppresses these then.
+    new_device_ids: Vec<String>,
+    known_here: usize,
+    new_here: usize,
+    /// Devices with no stable identity to judge by (a randomised or absent MAC).
+    unstable: usize,
+}
+
+impl RecognitionUpdate {
+    fn unrecognised() -> Self {
+        RecognitionUpdate {
+            network: None,
+            network_first_seen_unix: None,
+            new_device_ids: Vec::new(),
+            known_here: 0,
+            new_here: 0,
+            unstable: 0,
+        }
+    }
+}
+
+/// The on-disk recognition database, under the app's data directory. Returns
+/// `None` if the directory cannot be prepared, in which case recognition is
+/// simply skipped for this run.
+fn recognition_db_path(app: &tauri::AppHandle) -> Option<std::path::PathBuf> {
+    let dir = app.path().app_data_dir().ok()?;
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join("recognition.sqlite3"))
+}
+
+/// Recognise the current network and the devices on it, and emit the verdict.
+///
+/// All of the honesty lives in `core::history`; this only wires it to the live
+/// observation and the store. It never fabricates: no stable network key means
+/// an explicitly unrecognised result, and a device with no stable identity is
+/// counted as undeterminable, never as new.
+fn emit_recognition(
+    app: &tauri::AppHandle,
+    store: &jrx_collector::store::RecognitionStore,
+    identity: &NetworkIdentity,
+    report: &jrx_collector::discovery::DiscoveryReport,
+) {
+    use jrx_core::device::Identity;
+    use jrx_core::history::{DeviceStanding, device_key, network_key};
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+
+    // Retention: forget anything not seen in 90 days (ADR-021).
+    const RETENTION_SECS: i64 = 90 * 24 * 60 * 60;
+    let _ = store.sweep(now - RETENTION_SECS);
+
+    let gateway_mac = report
+        .devices
+        .iter()
+        .find(|device| device.is_gateway)
+        .and_then(|device| device.facts.mac);
+
+    let Some(key) = network_key(identity, gateway_mac) else {
+        let _ = app.emit("recognition://update", RecognitionUpdate::unrecognised());
+        return;
+    };
+
+    let (network, first_seen) = match store.observe_network(&key, now) {
+        Ok(result) => result,
+        Err(_) => return,
+    };
+
+    let mut new_device_ids = Vec::new();
+    let (mut known_here, mut new_here, mut unstable) = (0usize, 0usize, 0usize);
+
+    for device in &report.devices {
+        if device.is_self {
+            continue;
+        }
+        let observed = Identity {
+            addresses: device.facts.addresses.clone(),
+            mac: device.facts.mac,
+        };
+        match store.observe_device(&key.digest, device_key(&observed).as_deref(), now) {
+            Ok(DeviceStanding::New) => {
+                new_here += 1;
+                new_device_ids.push(device.id.clone());
+            }
+            Ok(DeviceStanding::Known) => known_here += 1,
+            Ok(DeviceStanding::CannotDetermine) => unstable += 1,
+            Err(_) => {}
+        }
+    }
+
+    let _ = app.emit(
+        "recognition://update",
+        RecognitionUpdate {
+            network: Some(network),
+            network_first_seen_unix: first_seen,
+            new_device_ids,
+            known_here,
+            new_here,
+            unstable,
+        },
+    );
+}
+
+/// Forget everything JRX has remembered — a real, immediate erase (ADR-021).
+#[tauri::command]
+fn clear_recognition(app: tauri::AppHandle) -> Result<(), String> {
+    let Some(path) = recognition_db_path(&app) else {
+        return Ok(());
+    };
+    jrx_collector::store::RecognitionStore::open(path)
+        .and_then(|store| store.clear_all())
+        .map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -294,7 +432,8 @@ pub fn run() {
             group_view,
             start_activity,
             stop_activity,
-            open_privacy_settings
+            open_privacy_settings,
+            clear_recognition
         ])
         .build(tauri::generate_context!())
         .expect("error while building JRX Observatory")

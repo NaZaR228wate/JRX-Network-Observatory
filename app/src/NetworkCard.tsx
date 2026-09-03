@@ -1,4 +1,4 @@
-import type { NetworkIdentity, NetworkIdentityReport } from "./types";
+import type { NetworkIdentity, NetworkIdentityReport, RecognitionUpdate } from "./types";
 import { bandLabel, connectionLabel, networkLine } from "./labels";
 
 /** The first thing on screen: what kind of connection, and which network.
@@ -8,9 +8,11 @@ import { bandLabel, connectionLabel, networkLine } from "./labels";
 export function NetworkCard({
   report,
   selfAddress,
+  recognition,
 }: {
   report: NetworkIdentityReport;
   selfAddress: string | null;
+  recognition?: RecognitionUpdate | null;
 }) {
   const id = report.identity;
   const net = networkLine(id);
@@ -24,6 +26,7 @@ export function NetworkCard({
           {signalSummary(id) && <span className="net-extra"> · {signalSummary(id)}</span>}
         </p>
         {net.note && <p className="note netcard-note">{net.note}</p>}
+        {recognition?.network && <RecognitionLine recognition={recognition} />}
       </div>
 
       <dl className="netcard-facts">
@@ -83,4 +86,43 @@ function signalWords(dbm: number): string {
   if (dbm >= -67) return "good signal";
   if (dbm >= -75) return "weak signal";
   return "very weak signal";
+}
+
+/** Whether JRX has been on this network before, with the honesty of the match.
+ *  A hardware match is confident; an addressing-only match is only "likely". */
+function RecognitionLine({ recognition }: { recognition: RecognitionUpdate }) {
+  if (recognition.network === "returning") {
+    return (
+      <p className="recognition known">
+        You have been on this network before
+        {recognition.network_first_seen_unix != null && (
+          <span className="note">
+            {" "}· first seen {sinceWords(recognition.network_first_seen_unix)}
+          </span>
+        )}
+      </p>
+    );
+  }
+  if (recognition.network === "returning_likely") {
+    return (
+      <p className="recognition likely">
+        You have likely been on this network before
+        <span className="note">
+          {" "}· matched on addressing, not hardware — JRX is not certain it is the
+          same one
+        </span>
+      </p>
+    );
+  }
+  return <p className="recognition first">First time on this network</p>;
+}
+
+/** A rough, friendly age from a Unix timestamp. */
+function sinceWords(unix: number): string {
+  const days = Math.floor(Date.now() / 1000 / 86400 - unix / 86400);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days} days ago`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? "a month ago" : `${months} months ago`;
 }

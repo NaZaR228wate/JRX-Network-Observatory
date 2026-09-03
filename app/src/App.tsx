@@ -8,6 +8,7 @@ import type {
   ActivitySnapshot,
   CapabilityMatrix,
   Category,
+  RecognitionUpdate,
   Device,
   DiscoveryReport,
   DiscoveryStage,
@@ -30,6 +31,7 @@ export function App() {
   const [sources, setSources] = useState<SourceQuality[]>([]);
   const [failure, setFailure] = useState<string | null>(null);
   const [activity, setActivity] = useState<ActivitySnapshot | null>(null);
+  const [recognition, setRecognition] = useState<RecognitionUpdate | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -67,6 +69,9 @@ export function App() {
       listen<ActivitySnapshot>("activity://snapshot", (event) =>
         setActivity(event.payload),
       ),
+      listen<RecognitionUpdate>("recognition://update", (event) =>
+        setRecognition(event.payload),
+      ),
     ];
 
     // Discovery must not start until the listeners are actually registered.
@@ -103,6 +108,7 @@ export function App() {
     sources,
     failure,
     activity,
+    recognition,
     // Derived by the host from the report it already holds: no network work.
     getGroup: (category: Category, page: number, filterKey: string) =>
       invoke<GroupView>("group_view", {

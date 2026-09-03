@@ -11,3 +11,4 @@ pub mod macos;
 pub mod oui;
 pub mod probe;
 pub mod registry;
+pub mod store;
