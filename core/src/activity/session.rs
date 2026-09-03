@@ -463,6 +463,24 @@ mod tests {
         assert_eq!(s.session_bytes_in(), 3_000);
     }
 
+    /// A reset in *one* direction is still a reset. A sample where either
+    /// counter went backwards is dropped whole, never mined for the direction
+    /// that happened to grow.
+    #[test]
+    fn a_partial_interface_reset_adds_nothing() {
+        let mut s = ActivitySession::new("en0");
+        s.observe_counters(counters(1_000_000, 500_000), TICK);
+        s.observe_counters(counters(1_002_000, 500_500), TICK);
+        // rx fell back to a fresh baseline while tx kept climbing.
+        s.observe_counters(counters(5_000, 900_000), TICK);
+        assert_eq!(s.session_bytes_in(), 2_000, "the reset direction adds nothing");
+        assert_eq!(
+            s.session_bytes_out(),
+            500,
+            "and the growing direction is dropped too: the whole sample is a reset"
+        );
+    }
+
     #[test]
     fn changing_interface_starts_the_counters_again_without_losing_the_session() {
         let mut s = ActivitySession::new("en0");
@@ -518,6 +536,30 @@ mod tests {
         assert_eq!(program(&s, "Safari").session_bytes_in, 2_000_000);
         assert_eq!(program(&s, "Safari").session_bytes_out, 500);
         assert_eq!(program(&s, "Safari").rate_in, 2_000_000);
+    }
+
+    /// Seeing a socket again with the very same counters is not new traffic.
+    /// A mutation that treated "unchanged" as a reset would count the whole
+    /// counter as if it had all just moved.
+    #[test]
+    fn re_observing_an_unchanged_socket_adds_nothing() {
+        let mut s = ActivitySession::new("en0");
+        s.observe_sockets(vec![socket(500, "Safari", 52000, 10_000_000, 200)], TICK);
+        s.observe_sockets(vec![socket(500, "Safari", 52000, 10_000_000, 200)], TICK);
+        assert_eq!(program(&s, "Safari").session_bytes_in, 0);
+        assert_eq!(program(&s, "Safari").session_bytes_out, 0);
+    }
+
+    /// When a five-tuple is reused, its counter can fall in one direction while
+    /// reading higher in the other. Only the new connection's own bytes count —
+    /// never a subtraction underflowed into a huge number.
+    #[test]
+    fn a_socket_counter_that_falls_counts_only_the_new_connection() {
+        let mut s = ActivitySession::new("en0");
+        s.observe_sockets(vec![socket(500, "Safari", 52000, 10_000_000, 5_000)], TICK);
+        s.observe_sockets(vec![socket(500, "Safari", 52000, 3_000, 6_000)], TICK);
+        assert_eq!(program(&s, "Safari").session_bytes_in, 3_000);
+        assert_eq!(program(&s, "Safari").session_bytes_out, 6_000);
     }
 
     /// The finding that shapes this whole module: a closed socket vanishes

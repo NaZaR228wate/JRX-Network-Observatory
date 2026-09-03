@@ -213,6 +213,25 @@ mod tests {
 
     // --- network keys ---
 
+    /// Golden digests. These pin both the hash function and the exact canonical
+    /// string a key is built from — and that string is a stored-data contract:
+    /// changing it would orphan every recognition record already on disk. A
+    /// deliberate change means updating these values on purpose; an accidental
+    /// one (or a mutation of the hash) fails here.
+    #[test]
+    fn digests_are_stable_across_versions() {
+        let mut wifi = base();
+        wifi.wifi = associated(Some("a4:83:e7:11:22:33"));
+        assert_eq!(
+            network_key(&wifi, None).unwrap().digest,
+            "fab253f66092e3c8"
+        );
+        assert_eq!(
+            device_key(&device("9c:69:d3:6c:38:28")).unwrap(),
+            "8db907f509ce8ee8"
+        );
+    }
+
     #[test]
     fn a_bssid_yields_a_hardware_key() {
         let mut id = base();

@@ -118,8 +118,10 @@ end-to-end.
 - **Mutation-tested honesty rules.** The tests that protect the product's
   integrity — "an address never becomes a hostname", "a byte count is measured,
   never modelled", "a randomised MAC is never a *new device*" — are checked by
-  deliberately breaking the code and confirming they fail. A green test that
-  cannot fail is treated as worse than no test.
+  deliberately breaking the code and confirming they fail — see
+  [`metrics/mutation.md`](metrics/mutation.md) for a run and its honest
+  accounting of what survived and why. A green test that cannot fail is treated
+  as worse than no test.
 - **Compile-time guardrails.** Development fixtures cannot be compiled into a
   release build; the privacy invariants are asserted in CI, not just intended.
 
