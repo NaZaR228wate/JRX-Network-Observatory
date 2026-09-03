@@ -15,7 +15,12 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
+        # macOS is the platform JRX supports today. Windows is deliberately
+        # not built yet (see README → Status & roadmap): tauri-build needs a
+        # Windows icon and the platform paths are unverified, so gating on it
+        # would assert support the project doesn't yet claim. Re-add
+        # windows-latest here when Windows support is actually built.
+        os: [macos-latest]
     steps:
       - uses: actions/checkout@v5
 
