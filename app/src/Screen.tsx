@@ -4,6 +4,7 @@ import { NetworkCard } from "./NetworkCard";
 import { Visibility } from "./Visibility";
 import { DeviceDetail } from "./topology/DeviceDetail";
 import { DiscoveryProgress, QualityBanner } from "./topology/DiscoveryProgress";
+import { Onboarding } from "./Onboarding";
 import { TopologyView } from "./topology/TopologyView";
 import { searchDevices } from "./topology/search";
 import { categoryLabel } from "./topology/visual";
@@ -103,6 +104,7 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
 
   return (
     <div className="shell">
+      <Onboarding />
       <Brand />
 
       {/* 1. NETWORK, and 2. THIS DEVICE */}
