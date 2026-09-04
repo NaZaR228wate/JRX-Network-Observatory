@@ -70,7 +70,7 @@ export function Onboarding() {
         <h3 className="onboard-heading">What it will never do</h3>
         <ul className="onboard-never">
           <li>Capture packets, messages, or credentials</li>
-          <li>Intercept TLS, or log your browsing and DNS</li>
+          <li>Peer inside your encrypted TLS traffic, or log your browsing and DNS</li>
           <li>Turn a network owner into a website you visited</li>
           <li>Phone home, use an account, or ask for admin access</li>
         </ul>
