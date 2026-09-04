@@ -310,7 +310,6 @@ export interface ConnectionActivity {
   remote_address: string | null;
   remote_port: number | null;
   state: string | null;
-  rtt_ms: number | null;
   /** The organisation owning the address range, from published allocation
    *  data. Not a website, not a domain, not a service. */
   network_owner: string | null;

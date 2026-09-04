@@ -323,9 +323,6 @@ function Destination({ connection }: { connection: ConnectionActivity }) {
         </span>
         <span className="dest-proto">{connection.protocol.toUpperCase()}</span>
         {connection.state && <span className="dest-state">{connection.state}</span>}
-        {connection.rtt_ms !== null && (
-          <span className="mono dest-rtt">{connection.rtt_ms.toFixed(0)} ms</span>
-        )}
         {!connection.is_open && <span className="dest-state">closed</span>}
       </div>
       <div className="dest-line">

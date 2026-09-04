@@ -46,7 +46,6 @@ pub struct SocketObservation {
     pub remote_address: Option<IpAddr>,
     pub remote_port: Option<u16>,
     pub state: Option<String>,
-    pub rtt_ms: Option<f64>,
     pub bytes_in: u64,
     pub bytes_out: u64,
     pub pid: u32,
@@ -149,7 +148,6 @@ pub struct ConnectionActivity {
     pub remote_address: Option<IpAddr>,
     pub remote_port: Option<u16>,
     pub state: Option<String>,
-    pub rtt_ms: Option<f64>,
     /// The organisation that owns the address range, where published
     /// allocation data says so.
     ///

@@ -28,7 +28,6 @@ fn socket(pid: u32, name: &str, remote: &str, bin: u64, bout: u64) -> SocketObse
         remote_address: Some(ip(remote)),
         remote_port: Some(443),
         state: Some("Established".into()),
-        rtt_ms: None,
         bytes_in: bin,
         bytes_out: bout,
         pid,

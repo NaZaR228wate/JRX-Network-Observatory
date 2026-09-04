@@ -188,7 +188,6 @@ mod tests {
             remote_address: Some("104.18.32.1".parse().unwrap()),
             remote_port: Some(443),
             state: Some("Established".into()),
-            rtt_ms: None,
             bytes_in: 10,
             bytes_out: 20,
             pid: 500,

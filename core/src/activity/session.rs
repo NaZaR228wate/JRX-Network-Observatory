@@ -32,7 +32,6 @@ struct TrackedSocket {
     remote_address: Option<std::net::IpAddr>,
     remote_port: Option<u16>,
     state: Option<String>,
-    rtt_ms: Option<f64>,
     is_open: bool,
 }
 
@@ -212,7 +211,6 @@ impl ActivitySession {
                     remote_address: observation.remote_address,
                     remote_port: observation.remote_port,
                     state: observation.state.clone(),
-                    rtt_ms: observation.rtt_ms,
                     is_open: true,
                 });
 
@@ -221,7 +219,6 @@ impl ActivitySession {
             entry.session_in = entry.session_in.saturating_add(delta_in);
             entry.session_out = entry.session_out.saturating_add(delta_out);
             entry.state = observation.state.clone();
-            entry.rtt_ms = observation.rtt_ms;
             entry.is_open = true;
 
             process.session_in = process.session_in.saturating_add(delta_in);
@@ -343,7 +340,6 @@ fn render(process: &TrackedProcess) -> ProcessActivity {
             remote_address: socket.remote_address,
             remote_port: socket.remote_port,
             state: socket.state.clone(),
-            rtt_ms: socket.rtt_ms,
             network_owner: socket.remote_address.and_then(owner::network_owner),
             session_bytes_in: socket.session_in,
             session_bytes_out: socket.session_out,
@@ -394,7 +390,6 @@ mod tests {
             remote_address: Some("104.18.32.1".parse().unwrap()),
             remote_port: Some(443),
             state: Some("Established".into()),
-            rtt_ms: Some(24.0),
             bytes_in: bin,
             bytes_out: bout,
             pid,

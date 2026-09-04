@@ -96,7 +96,7 @@ describe("search", () => {
         connections: [
           {
             protocol: "tcp", remote_address: "104.18.32.1", remote_port: 443,
-            state: "Established", rtt_ms: null, network_owner: "Cloudflare",
+            state: "Established", network_owner: "Cloudflare",
             session_bytes_in: 1, session_bytes_out: 1, is_open: true,
           },
         ],

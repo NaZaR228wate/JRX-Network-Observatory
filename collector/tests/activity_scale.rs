@@ -19,7 +19,6 @@ fn socket(pid: u32, port: u16, bin: u64, bout: u64) -> SocketObservation {
         ),
         remote_port: Some(443),
         state: Some("Established".into()),
-        rtt_ms: Some(20.0),
         bytes_in: bin,
         bytes_out: bout,
         pid,

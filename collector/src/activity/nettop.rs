@@ -108,7 +108,6 @@ fn parse_socket_row(fields: &[&str]) -> Option<SocketObservation> {
         remote_address: remote.map(|(address, _)| address),
         remote_port: remote.map(|(_, port)| port),
         state: column("state").filter(|s| !s.is_empty()).map(str::to_owned),
-        rtt_ms: None,
         // An unparseable count is zero, never a guess proportional to anything.
         bytes_in: column("bytes_in").and_then(|v| v.parse().ok()).unwrap_or(0),
         bytes_out: column("bytes_out")

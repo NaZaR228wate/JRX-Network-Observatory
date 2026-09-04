@@ -560,7 +560,6 @@ pub fn activity(fixture: Fixture) -> jrx_core::activity::ActivitySnapshot {
             remote_address: Some(remote.parse().unwrap()),
             remote_port: Some(443),
             state: Some("Established".into()),
-            rtt_ms: Some(28.0),
             bytes_in: bin,
             bytes_out: bout,
             pid,
