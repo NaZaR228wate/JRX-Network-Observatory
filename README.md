@@ -119,6 +119,28 @@ Architecture and the reasoning behind each decision live in
 
 ---
 
+## Design decisions
+
+A few choices that shape how the interface earns trust:
+
+- **A radial map, not a force simulation.** A home network is a star, so the
+  layout is deterministic geometry — a node never drifts or jitters between
+  refreshes, and motion only ever means something.
+- **Colour marks the *kind* of device; confidence is said in words.** One colour
+  axis stays readable — including without colour vision — and a device JRX cannot
+  place is left as a quiet dashed circle rather than given a fabricated label.
+- **Small networks are shown device-by-device; larger ones group by kind.** Up to
+  ~14 devices, each gets its own icon; above that they collapse into category
+  groups, so a 500-device network stays legible instead of a hairball.
+- **Facts stay separate from inference** — in the Rust types, the device panel,
+  and the wording — so what JRX *observed* is never shown as what it *concluded*,
+  and every conclusion cites the observation behind it.
+- **One application, one row.** In Activity, a program's processes are merged only
+  when the executable's path proves they share a bundle — never on a matching
+  name, which would be a guess.
+
+---
+
 ## Honesty & testing
 
 The project holds its own claims to the standard it holds its UI to. Findings
@@ -127,8 +149,8 @@ and the distinction is never blurred. A milestone is not "done" because a browse
 preview looked right; it is done when the real bundled app has been exercised
 end-to-end.
 
-- **~390 automated tests** across the workspace (`core` 194, `collector` 134,
-  `app` privacy invariants 8, frontend 54).
+- **~395 automated tests** across the workspace (`core` 194, `collector` 134,
+  `app` privacy invariants 8, frontend 59).
 - **Mutation-tested honesty rules.** The tests that protect the product's
   integrity — "an address never becomes a hostname", "a byte count is measured,
   never modelled", "a randomised MAC is never a *new device*" — are checked by

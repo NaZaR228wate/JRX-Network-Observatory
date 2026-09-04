@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   bytes,
   displayName,
+  groupPrograms,
   rate,
+  searchGroups,
   searchPrograms,
+  sortGroups,
   sortPrograms,
 } from "./rank";
 import type { ProcessActivity } from "../types";
@@ -114,6 +117,63 @@ describe("search", () => {
   it("matches nothing that looks like a website", () => {
     expect(searchPrograms(PROGRAMS, "cloudflare.com")).toHaveLength(0);
     expect(searchPrograms(PROGRAMS, ".com")).toHaveLength(0);
+  });
+});
+
+describe("grouping one application's processes", () => {
+  // A browser and its helpers, all proven to belong to the same bundle.
+  const chromeMain = program({
+    pid: 100, process_name: "Google Chrome", application: "Google Chrome",
+    session_bytes_in: 1_000, session_bytes_out: 200, rate_in: 10, rate_out: 2, active_connections: 3,
+  });
+  const chromeHelper = program({
+    pid: 101, process_name: "Google Chrome Helper", application: "Google Chrome",
+    session_bytes_in: 4_000, session_bytes_out: 800, rate_in: 40, rate_out: 8, active_connections: 5,
+  });
+  const rapportd = program({ pid: 200, process_name: "rapportd", session_bytes_in: 10 });
+  const otherd = program({ pid: 201, process_name: "rapportd", session_bytes_in: 20 });
+
+  it("merges processes that share a proven application into one row", () => {
+    const groups = groupPrograms([chromeMain, chromeHelper]);
+    expect(groups).toHaveLength(1);
+    const g = groups[0]!;
+    expect(g.label).toBe("Google Chrome");
+    expect(g.process_count).toBe(2);
+    expect(g.pids).toEqual([100, 101]);
+    // metrics are summed
+    expect(g.session_bytes_in).toBe(5_000);
+    expect(g.session_bytes_out).toBe(1_000);
+    expect(g.rate_in).toBe(50);
+    expect(g.active_connections).toBe(8);
+  });
+
+  it("never merges processes without a proven application, even with the same name", () => {
+    const groups = groupPrograms([rapportd, otherd]);
+    expect(groups).toHaveLength(2);
+    expect(groups.every((g) => g.process_count === 1)).toBe(true);
+  });
+
+  it("leaves a single-process application as a group of one", () => {
+    const groups = groupPrograms([program({ pid: 5, process_name: "claude", application: "Claude" })]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.process_count).toBe(1);
+    expect(groups[0]!.label).toBe("Claude");
+  });
+
+  it("ranks groups by total activity, deterministically", () => {
+    const groups = groupPrograms([rapportd, chromeMain, chromeHelper]);
+    const ranked = sortGroups(groups, "activity").map((g) => g.label);
+    expect(ranked[0]).toBe("Google Chrome"); // 6000 B total beats rapportd's 10 B
+    // stable: same input in any order gives the same result
+    const reranked = sortGroups(groupPrograms([chromeHelper, chromeMain, rapportd]), "activity").map((g) => g.label);
+    expect(reranked).toEqual(ranked);
+  });
+
+  it("searches every process merged into a group, and the application name", () => {
+    const groups = groupPrograms([chromeMain, chromeHelper]);
+    expect(searchGroups(groups, "helper")).toHaveLength(1);   // a member's process name
+    expect(searchGroups(groups, "chrome")).toHaveLength(1);   // the application
+    expect(searchGroups(groups, "firefox")).toHaveLength(0);
   });
 });
 
