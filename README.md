@@ -24,9 +24,9 @@ and a mobile companion later.
 
 Shown on JRX's built-in **demo network** — deterministic fixture data, not a real network.
 
-![JRX showing the Wi-Fi you are connected to, that you have been on this network before, and a map of the devices around you](docs/screenshots/01-network.png)
+![JRX's home screen: the Wi-Fi you are connected to, whether you have been on this network before, and a live map of the devices around you — the router at the centre, this Mac highlighted, and every device drawn as the kind of thing it is](docs/screenshots/01-network.png)
 
-![JRX's hierarchical topology map: the router at the centre, this Mac highlighted, every other device grouped by kind and bounded so a busy network stays legible](docs/screenshots/02-topology.png)
+![Click any device for the full picture: what JRX observed, what it concluded and why, and — stated plainly — what it still does not know. Colour marks the kind of device, never a guess; an unidentified device stays a dashed circle rather than a fabricated label. Busy networks group by kind so the map stays legible](docs/screenshots/02-topology.png)
 
 ---
 
