@@ -1,5 +1,6 @@
 import type { Device, DiscoverySource, Evidence } from "../types";
-import { categoryLabel, confidenceLabel } from "./visual";
+import { categoryLabel, categoryTone, confidenceLabel } from "./visual";
+import { CategoryIcon } from "./icons";
 
 const SOURCE_LABEL: Record<DiscoverySource, string> = {
   arp_cache: "Already known to this Mac — nothing was sent",
@@ -36,18 +37,23 @@ export function DeviceDetail({
   return (
     <aside className="detail" aria-label="Device details">
       <div className="detail-head">
-        <div>
-          <h3>{displayName(device)}</h3>
-          {unidentified ? (
-            // Not "Unknown / 0%": choosing not to guess is a result, not a
-            // failure, and the wording must not read like one.
-            <p className="note">Unidentified device</p>
-          ) : (
-            <p className="note">
-              {categoryLabel(inference.category)} · {confidenceLabel(inference.confidence)}
-              {inference.family && ` · ${inference.family}`}
-            </p>
-          )}
+        <div className="detail-head-main">
+          <span className={`detail-icon ${categoryTone(inference.category)} conf-${inference.confidence}`}>
+            <CategoryIcon category={inference.category} size={24} />
+          </span>
+          <div>
+            <h3>{displayName(device)}</h3>
+            {unidentified ? (
+              // Not "Unknown / 0%": choosing not to guess is a result, not a
+              // failure, and the wording must not read like one.
+              <p className="note">Unidentified device</p>
+            ) : (
+              <p className="note">
+                {categoryLabel(inference.category)} · {confidenceLabel(inference.confidence)}
+                {inference.family && ` · ${inference.family}`}
+              </p>
+            )}
+          </div>
         </div>
         <button className="back" onClick={onClose} aria-label="Close details">
           ✕

@@ -166,6 +166,8 @@ export function Screen({ data, live }: { data?: PreviewData; live?: ScreenData }
           {overview ? (
             <TopologyView
               overview={overview}
+              devices={devices}
+              selectedId={selected}
               group={group}
               openCategory={openCategory}
               highlighted={highlighted}

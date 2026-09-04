@@ -97,15 +97,20 @@ export function placeMembers(
 }
 
 /** Node radius by role. The router anchors the picture, so it is the largest;
- *  unknown devices are deliberately quiet. */
-export function nodeRadius(role: "router" | "self" | "group" | "device"): number {
+ *  unknown devices are deliberately quiet. A "member" is one device shown big
+ *  enough to carry its own icon; "device" is the older, smaller dot. */
+export function nodeRadius(
+  role: "router" | "self" | "group" | "member" | "device",
+): number {
   switch (role) {
     case "router":
-      return 27;
+      return 30;
     case "self":
-      return 19;
-    case "group":
       return 23;
+    case "group":
+      return 25;
+    case "member":
+      return 20;
     case "device":
       return 11;
   }

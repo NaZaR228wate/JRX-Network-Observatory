@@ -578,3 +578,94 @@ body {
 .onboard-go { background: var(--accent); color: #06202b; border: none; border-radius: 8px; font: inherit; font-size: 13.5px; font-weight: 600; padding: 9px 18px; cursor: pointer }
 .onboard-go:hover { filter: brightness(1.08) }
 .onboard-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+
+/* ============================================================
+   Topology + device detail — visual redesign
+   Structure, data model and copy are unchanged; this is the
+   look: real category icons, depth, and a calmer confidence
+   language. Colour still follows the category, never the guess.
+   ============================================================ */
+
+.topo {
+  background:
+    radial-gradient(440px 320px at 50% 47%, rgba(76, 194, 255, 0.07), rgba(76, 194, 255, 0) 70%),
+    var(--panel);
+  overflow: hidden;
+}
+
+/* nodes: a touch more body, and a clear hover without moving (the position
+   is a fixed SVG transform, so hover changes weight, not place) */
+.node-body { fill: #141c26; }
+.node:hover .node-body { fill: #1b2735; }
+.node[role="button"]:hover .node-body { stroke-width: 2.4; }
+.node.router .node-body { fill: #0f2230; }
+.node.self .node-body { fill: #10222e; }
+.node.group:hover .node-body { fill: #1b2735; }
+
+/* icons inside nodes: crisp at any scale, coloured by the category tone */
+.node-glyph { fill: none; stroke: currentColor; color: var(--muted); }
+.node-glyph :is(path, rect, circle, line) {
+  vector-effect: non-scaling-stroke;
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.cat-computers .node-glyph { color: #6ea8fe; }
+.cat-phones .node-glyph { color: #b48ef7; }
+.cat-smart-home .node-glyph { color: #46c9a5; }
+.cat-infrastructure .node-glyph { color: #f0b429; }
+.cat-unknown .node-glyph { color: #7a8695; }
+.node.router .node-glyph,
+.node.self .node-glyph { color: var(--accent); }
+
+/* confidence reads through the ring, never through a colour that competes
+   with the category: a device JRX did not place is drawn quietly */
+.node.conf-none .node-body { stroke-dasharray: 3 4; }
+.node.conf-none .node-glyph { opacity: 0.72; }
+.conf-dot { fill: var(--ok); stroke: var(--panel); stroke-width: 1.5; }
+.node.conf-medium .conf-dot { fill: var(--accent); }
+
+/* count badge on the grouped-overview nodes (a pill, so 3-digit counts fit) */
+.node-badge :is(circle, rect) { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.node-badge text {
+  fill: #06202b; font-size: 11px; font-weight: 700; text-anchor: middle;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.cat-computers .node-badge :is(circle, rect) { fill: #6ea8fe; }
+.cat-phones .node-badge :is(circle, rect) { fill: #b48ef7; }
+.cat-smart-home .node-badge :is(circle, rect) { fill: #46c9a5; }
+.cat-infrastructure .node-badge :is(circle, rect) { fill: #f0b429; }
+.cat-unknown .node-badge :is(circle, rect) { fill: #7a8695; }
+
+/* the node the detail panel is showing */
+.select-ring { fill: none; stroke: var(--accent); stroke-width: 2; opacity: 0.9; }
+.node.active .node-body { stroke: var(--accent); stroke-width: 2.4; }
+
+.node-label { fill: #cdd7e1; font-size: 12.5px; font-weight: 500; }
+.node.router .node-label,
+.node.self .node-label { fill: var(--text); font-weight: 600; }
+
+/* detail header: an icon tile that names the kind at a glance */
+.detail-head-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.detail-icon {
+  width: 42px; height: 42px; border-radius: 12px; flex: none;
+  display: grid; place-items: center;
+  background: #131c26; border: 1px solid var(--line); color: var(--muted);
+}
+.detail-icon .cat-icon {
+  fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+.detail-icon.cat-computers { color: #6ea8fe; border-color: #26384f; background: #121c2a; }
+.detail-icon.cat-phones { color: #b48ef7; border-color: #34294a; background: #181425; }
+.detail-icon.cat-smart-home { color: #46c9a5; border-color: #1e4038; background: #10201d; }
+.detail-icon.cat-infrastructure { color: #f0b429; border-color: #453310; background: #211a09; }
+.detail-icon.cat-unknown { color: #8b98a5; border-color: var(--line); background: #131a22; }
+.detail-icon.conf-none { opacity: 0.9; }
+
+/* service chips in the detail read as small tokens, not list items */
+.detail .chips li {
+  background: #131c26; border-color: #26313f; border-radius: 6px;
+  padding: 2px 8px; color: #cfe0f2;
+}
+
